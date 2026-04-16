@@ -10,9 +10,16 @@ const app = express();
 const prisma = new PrismaClient();
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173", "https://fee-flow-frontend.vercel.app",
-  credentials: true
+  origin: [
+    "http://localhost:5173",
+    "https://feeflowfrontendversion11wjpj.vercel.app"
+  ],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
+app.options('*', cors());
+app.use(express.json());
 app.use(express.json());
 
 // ─── Auth middleware ───────────────────────────────────────────────────────────
@@ -453,4 +460,4 @@ if (process.env.NODE_ENV !== 'production') {
   })
 }
 
-module.exports = app
+export default app

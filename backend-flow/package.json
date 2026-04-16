@@ -4,10 +4,10 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "build": "prisma generate",
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
+  "postinstall": "prisma generate",
+  "start": "node server.js",
+  "dev": "nodemon server.js"
+},
   "dependencies": {
     "@prisma/client": "^6.19.3",
     "bcrypt": "^6.0.0",
