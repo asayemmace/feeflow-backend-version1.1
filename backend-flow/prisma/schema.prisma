@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id         String    @id @default(uuid())
+  name       String
+  email      String    @unique
+  password   String
+  schoolName String?
+  createdAt  DateTime  @default(now())
+  students   Student[]
+  payments   Payment[]
+  terms      Term[]
+}
+
+model Student {
+  id          String    @id @default(uuid())
+  name        String
+  adm         String    @unique
+  cls         String
+  fee         Float     @default(0)
+  paid        Float     @default(0)
+  daysOverdue Int       @default(0)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  createdAt   DateTime  @default(now())
+  payments    Payment[]
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  amount    Float
+  txnRef    String?
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Term {
+  id        String   @id @default(uuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  status    String   @default("active")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
