@@ -1,46 +1,61 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
-import ProtectedRoute from './components/ProtectedRoute';
-import AdminLayout from './layouts/AdminLayout';
+import { useAuth, AuthProvider } from './contexts/AuthContext';
 
-import Landing  from './pages/Landing';
-import Login    from './pages/Login';
-import Register from './pages/Register';
-import Dashboard from './pages/Dashboard';
-import Students  from './pages/Students';
-import Payments  from './pages/Payments';
+import AppLayout    from './layouts/AppLayout';
+import Landing      from './pages/Landing';
+import Login        from './pages/Login';
+import Register     from './pages/Register';
+import Dashboard    from './pages/Dashboard';
+import Students     from './pages/Students';
+import Payments     from './pages/Payments';
 
-import './index.css';
+// Redirects to /login if not logged in
+function PrivateRoute({ children }) {
+  const { token } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  return children;
+}
 
-const App = () => {
+// Redirects to /dashboard if already logged in
+function GuestRoute({ children }) {
+  const { token } = useAuth();
+  if (token) return <Navigate to="/dashboard" replace />;
+  return children;
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Public */}
+      <Route path="/" element={<GuestRoute><Landing /></GuestRoute>} />
+      <Route path="/login"    element={<GuestRoute><Login /></GuestRoute>} />
+      <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
+
+      {/* Protected — all wrapped in AppLayout which renders the sidebar + <Outlet/> */}
+      <Route
+        element={
+          <PrivateRoute>
+            <AppLayout />
+          </PrivateRoute>
+        }
+      >
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/students"  element={<Students />} />
+        <Route path="/payments"  element={<Payments />} />
+      </Route>
+
+      {/* Fallback */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          {/* Public routes */}
-          <Route path="/"         element={<Landing />} />
-          <Route path="/login"    element={<Login />} />
-          <Route path="/register" element={<Register />} />
-
-          {/* Protected routes — wrapped in AdminLayout */}
-          <Route
-            element={
-              <ProtectedRoute>
-                <AdminLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/students"  element={<Students />} />
-            <Route path="/payments"  element={<Payments />} />
-          </Route>
-
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <AppRoutes />
       </AuthProvider>
     </BrowserRouter>
   );
-};
-
-export default App;
+}

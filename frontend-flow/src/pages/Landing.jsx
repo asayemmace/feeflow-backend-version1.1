@@ -134,7 +134,7 @@ const CheckIcon = ({ color }) => (
 );
 
 const XIcon = () => (
-  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#1e2d47" strokeWidth="2.5" style={{ flexShrink: 0, marginTop: 1 }}>
+  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--text3)" strokeWidth="2.5" style={{ flexShrink: 0, marginTop: 1, opacity: 0.5 }}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
   </svg>
 );
@@ -255,12 +255,14 @@ const Landing = () => {
               <div
                 key={plan.name}
                 style={{
-                  background: isPopular ? 'linear-gradient(160deg,#111827 60%,rgba(34,211,164,0.04))' : '#111827',
-                  border: `1px solid ${isPopular ? 'rgba(34,211,164,0.25)' : '#1e2d47'}`,
+                  background: isPopular
+                    ? 'linear-gradient(160deg, var(--surface2) 60%, var(--surface))'
+                    : 'var(--surface)',
+                  border: `1px solid ${isPopular ? plan.accentBorder : 'var(--border)'}`,
                   borderRadius: 16,
                   padding: '28px 24px',
                   position: 'relative',
-                  boxShadow: isPopular ? '0 0 0 1px rgba(34,211,164,0.1), 0 20px 40px rgba(0,0,0,0.3)' : 'none',
+                  boxShadow: isPopular ? `0 0 0 1px ${plan.accentBorder}, 0 20px 40px rgba(0,0,0,0.15)` : 'none',
                   display: 'flex',
                   flexDirection: 'column',
                 }}
@@ -270,7 +272,7 @@ const Landing = () => {
                   <div style={{
                     position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
                     fontSize: 10.5, fontWeight: 700, padding: '4px 12px', borderRadius: 20,
-                    background: plan.accent, color: isPopular ? '#0b1a14' : '#0b1a14',
+                    background: plan.accent, color: '#0b1a14',
                     letterSpacing: 0.8, textTransform: 'uppercase', whiteSpace: 'nowrap',
                   }}>{plan.badge}</div>
                 )}
@@ -285,10 +287,10 @@ const Landing = () => {
                 <div style={{ marginBottom: 6 }}>
                   <span style={{
                     fontFamily: "'DM Serif Display',serif",
-                    fontSize: 36, fontWeight: 400, color: '#e8edf5', letterSpacing: -1,
+                    fontSize: 36, fontWeight: 400, color: 'var(--text)', letterSpacing: -1,
                   }}>{plan.priceLabel}</span>
                 </div>
-                <div style={{ fontSize: 12.5, color: '#4a5f80', marginBottom: 24 }}>{plan.sub}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--text3)', marginBottom: 24 }}>{plan.sub}</div>
 
                 {/* CTA */}
                 <button
@@ -299,18 +301,18 @@ const Landing = () => {
                     width: '100%', padding: '10px 0', borderRadius: 9,
                     fontSize: 13, fontWeight: 600, cursor: 'pointer',
                     fontFamily: "'DM Sans',sans-serif", marginBottom: 24,
-                    border: plan.ctaStyle === 'outline' ? `1px solid #1e2d47` : 'none',
+                    border: plan.ctaStyle === 'outline' ? `1px solid var(--border)` : 'none',
                     background: plan.ctaStyle === 'primary' ? '#22d3a4'
                       : plan.ctaStyle === 'amber' ? 'rgba(245,158,11,0.1)'
                       : 'transparent',
                     color: plan.ctaStyle === 'primary' ? '#0b1a14'
                       : plan.ctaStyle === 'amber' ? '#f59e0b'
-                      : '#8a9dbf',
+                      : 'var(--text2)',
                   }}
                 >{plan.cta}</button>
 
                 {/* Divider */}
-                <div style={{ borderTop: '1px solid #1e2d47', marginBottom: 20 }} />
+                <div style={{ borderTop: '1px solid var(--border)', marginBottom: 20 }} />
 
                 {/* Features */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 11, flex: 1 }}>
@@ -318,7 +320,7 @@ const Landing = () => {
                     <div key={f.text} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                       {f.included ? <CheckIcon color={plan.accent} /> : <XIcon />}
                       <span style={{
-                        fontSize: 13, color: f.included ? '#8a9dbf' : '#2a3a55',
+                        fontSize: 13, color: f.included ? 'var(--text2)' : 'var(--text3)',
                         lineHeight: 1.5,
                       }}>{f.text}</span>
                     </div>
@@ -327,7 +329,7 @@ const Landing = () => {
 
                 {/* Note */}
                 <div style={{
-                  marginTop: 20, fontSize: 11.5, color: '#4a5f80',
+                  marginTop: 20, fontSize: 11.5, color: 'var(--text3)',
                   padding: '10px 12px', borderRadius: 8,
                   background: plan.accentBg, border: `1px solid ${plan.accentBorder}`,
                   lineHeight: 1.6,

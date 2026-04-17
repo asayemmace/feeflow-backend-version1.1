@@ -101,12 +101,13 @@ function AddPaymentModal({ onClose, onAdded }) {
 
   const inp = {
     width: "100%", padding: "9px 12px",
-    background: "#212f48", border: "1px solid #1e2d47",
-    borderRadius: 8, color: "#e8edf5", fontSize: 13.5,
+    background: "var(--surface)", border: "1px solid var(--border)",
+    borderRadius: 8, color: "var(--text)", fontSize: 13.5,
     fontFamily: "'DM Sans',sans-serif", outline: "none",
+    boxSizing: "border-box",
   };
   const lbl = {
-    fontSize: 11.5, fontWeight: 600, color: "#8a9dbf",
+    fontSize: 11.5, fontWeight: 600, color: "var(--text3)",
     textTransform: "uppercase", letterSpacing: 0.8,
     marginBottom: 6, display: "block",
   };
@@ -121,29 +122,29 @@ function AddPaymentModal({ onClose, onAdded }) {
         position: "fixed", top: "50%", left: "50%", zIndex: 50,
         transform: "translate(-50%,-50%)",
         width: "100%", maxWidth: 560,
-        background: "#111827", border: "1px solid #1e2d47",
-        borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+        background: "var(--surface2)", border: "1px solid var(--border)",
+        borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.4)",
         maxHeight: "90vh", display: "flex", flexDirection: "column",
         overflow: "hidden",
       }}>
         {/* Header */}
         <div style={{
-          padding: "20px 24px 16px", borderBottom: "1px solid #1e2d47",
+          padding: "20px 24px 16px", borderBottom: "1px solid var(--border)",
           display: "flex", justifyContent: "space-between", alignItems: "flex-start",
           flexShrink: 0,
         }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: "#e8edf5", fontFamily: "'DM Serif Display',serif" }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)", fontFamily: "'DM Serif Display',serif" }}>
               Record Payment
             </div>
-            <div style={{ fontSize: 12, color: "#4a5f80", marginTop: 3 }}>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 3 }}>
               Select a student, enter amount, then save or trigger STK push
             </div>
           </div>
           <button onClick={onClose} style={{
             width: 30, height: 30, borderRadius: 7,
-            background: "transparent", border: "1px solid #1e2d47",
-            color: "#8a9dbf", cursor: "pointer", fontSize: 16,
+            background: "transparent", border: "1px solid var(--border)",
+            color: "var(--text2)", cursor: "pointer", fontSize: 16,
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>×</button>
         </div>
@@ -160,18 +161,18 @@ function AddPaymentModal({ onClose, onAdded }) {
                 onClick={() => setClassFilter("all")}
                 style={{
                   padding: "4px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 500,
-                  background: classFilter === "all" ? "#22d3a4" : "#1a2236",
-                  border: "1px solid " + (classFilter === "all" ? "#22d3a4" : "#1e2d47"),
-                  color: classFilter === "all" ? "#0b1a14" : "#8a9dbf",
+                  background: classFilter === "all" ? "#22d3a4" : "var(--surface3)",
+                  border: "1px solid " + (classFilter === "all" ? "#22d3a4" : "var(--border)"),
+                  color: classFilter === "all" ? "#0b1a14" : "var(--text2)",
                   cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
                 }}
               >All</button>
               {classes.map((c) => (
                 <button key={c} onClick={() => setClassFilter(c)} style={{
                   padding: "4px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 500,
-                  background: classFilter === c ? "#22d3a4" : "#1a2236",
-                  border: "1px solid " + (classFilter === c ? "#22d3a4" : "#1e2d47"),
-                  color: classFilter === c ? "#0b1a14" : "#8a9dbf",
+                  background: classFilter === c ? "#22d3a4" : "var(--surface3)",
+                  border: "1px solid " + (classFilter === c ? "#22d3a4" : "var(--border)"),
+                  color: classFilter === c ? "#0b1a14" : "var(--text2)",
                   cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
                 }}>{c}</button>
               ))}
@@ -179,13 +180,13 @@ function AddPaymentModal({ onClose, onAdded }) {
 
             {/* Student list */}
             <div style={{
-              border: "1px solid #1e2d47", borderRadius: 10, overflow: "hidden",
+              border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden",
               maxHeight: 200, overflowY: "auto",
             }}>
               {loadingStudents ? (
-                <div style={{ padding: "20px", textAlign: "center", color: "#4a5f80", fontSize: 13 }}>Loading students…</div>
+                <div style={{ padding: "20px", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>Loading students…</div>
               ) : filteredStudents.length === 0 ? (
-                <div style={{ padding: "20px", textAlign: "center", color: "#4a5f80", fontSize: 13 }}>No students found</div>
+                <div style={{ padding: "20px", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>No students found</div>
               ) : filteredStudents.map((s) => {
                 const bal = Math.max(0, s.fee - s.paid);
                 const isSelected = form.studentId === s.id;
@@ -197,16 +198,16 @@ function AddPaymentModal({ onClose, onAdded }) {
                       display: "flex", alignItems: "center", justifyContent: "space-between",
                       padding: "10px 14px",
                       background: isSelected ? "rgba(34,211,164,0.08)" : "transparent",
-                      borderBottom: "1px solid #1e2d47",
+                      borderBottom: "1px solid var(--border)",
                       cursor: "pointer", transition: "background .1s",
                       borderLeft: isSelected ? "3px solid #22d3a4" : "3px solid transparent",
                     }}
-                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "#1a2236"; }}
+                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--surface3)"; }}
                     onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
                   >
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: "#e8edf5" }}>{s.name}</div>
-                      <div style={{ fontSize: 11.5, color: "#4a5f80", marginTop: 2 }}>{s.cls} · {s.adm || "—"}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{s.name}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>{s.cls} · {s.adm || "—"}</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
                       <div style={{
@@ -225,10 +226,10 @@ function AddPaymentModal({ onClose, onAdded }) {
           {/* Selected student summary */}
           {selectedStudent && (
             <div style={{
-              background: "#1a2236", border: "1px solid #1e2d47",
+              background: "var(--surface3)", border: "1px solid var(--border)",
               borderRadius: 10, padding: "12px 14px",
             }}>
-              <div style={{ fontSize: 12, color: "#4a5f80", marginBottom: 8 }}>Fee summary — {selectedStudent.name}</div>
+              <div style={{ fontSize: 12, color: "var(--text3)", marginBottom: 8 }}>Fee summary — {selectedStudent.name}</div>
               <div style={{ display: "flex", gap: 20 }}>
                 {[
                   ["Term fee",   `KES ${selectedStudent.fee.toLocaleString()}`],
@@ -236,8 +237,8 @@ function AddPaymentModal({ onClose, onAdded }) {
                   ["Balance",    `KES ${balance.toLocaleString()}`],
                 ].map(([k, v]) => (
                   <div key={k}>
-                    <div style={{ fontSize: 11, color: "#4a5f80", textTransform: "uppercase", letterSpacing: 0.8 }}>{k}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: k === "Balance" && balance > 0 ? "#f59e0b" : "#e8edf5", marginTop: 2 }}>{v}</div>
+                    <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: 0.8 }}>{k}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: k === "Balance" && balance > 0 ? "var(--accent3)" : "var(--text)", marginTop: 2 }}>{v}</div>
                   </div>
                 ))}
               </div>
@@ -256,7 +257,7 @@ function AddPaymentModal({ onClose, onAdded }) {
                 onChange={set("amount")}
               />
               {selectedStudent && balance > 0 && (
-                <div style={{ fontSize: 11, color: "#4a5f80", marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 4 }}>
                   Full balance: KES {balance.toLocaleString()}
                   &nbsp;
                   <span
@@ -285,10 +286,10 @@ function AddPaymentModal({ onClose, onAdded }) {
           {/* STK push */}
           <div style={{
             background: "rgba(34,211,164,0.04)",
-            border: "1px solid rgba(34,211,164,0.1)",
+            border: "1px solid rgba(34,211,164,0.12)",
             borderRadius: 10, padding: "14px",
           }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: "#8a9dbf", marginBottom: 10 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text2)", marginBottom: 10 }}>
               M-Pesa STK Push (optional)
             </div>
             <div style={{ display: "flex", gap: 10 }}>
@@ -305,11 +306,11 @@ function AddPaymentModal({ onClose, onAdded }) {
                 style={{
                   padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
                   background: (!phoneValid || !form.studentId || amountNum <= 0)
-                    ? "#212f48"
+                    ? "var(--surface3)"
                     : stkSent ? "rgba(34,211,164,0.15)" : "#22d3a4",
                   border: stkSent ? "1px solid rgba(34,211,164,0.3)" : "none",
                   color: (!phoneValid || !form.studentId || amountNum <= 0)
-                    ? "#4a5f80"
+                    ? "var(--text3)"
                     : stkSent ? "#22d3a4" : "#0b1a14",
                   cursor: (!phoneValid || !form.studentId || amountNum <= 0 || stkLoading)
                     ? "not-allowed" : "pointer",
@@ -320,7 +321,7 @@ function AddPaymentModal({ onClose, onAdded }) {
                 {stkLoading ? "Sending…" : stkSent ? "✓ Sent!" : "Send STK →"}
               </button>
             </div>
-            <div style={{ fontSize: 11.5, color: "#4a5f80", marginTop: 8 }}>
+            <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 8 }}>
               {!form.phone
                 ? "Enter a valid Kenyan number (07XX or 01XX) to enable STK push."
                 : !phoneValid
@@ -349,24 +350,24 @@ function AddPaymentModal({ onClose, onAdded }) {
 
         {/* Footer */}
         <div style={{
-          padding: "14px 24px", borderTop: "1px solid #1e2d47",
+          padding: "14px 24px", borderTop: "1px solid var(--border)",
           display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0,
         }}>
           <button onClick={onClose} style={{
             padding: "8px 16px", borderRadius: 8, fontSize: 13,
-            background: "transparent", border: "1px solid #1e2d47",
-            color: "#8a9dbf", cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
+            background: "transparent", border: "1px solid var(--border)",
+            color: "var(--text2)", cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
           }}>Cancel</button>
           <button onClick={handleSave} disabled={saving} style={{
             padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-            background: saving ? "#212f48" : "#22d3a4",
-            border: "none", color: saving ? "#4a5f80" : "#0b1a14",
+            background: saving ? "var(--surface3)" : "#22d3a4",
+            border: "none", color: saving ? "var(--text3)" : "#0b1a14",
             cursor: saving ? "not-allowed" : "pointer",
             fontFamily: "'DM Sans',sans-serif",
           }}>{saving ? "Saving…" : "Save payment"}</button>
         </div>
       </div>
-      <style>{`select option{background:#1a2236;color:#e8edf5}`}</style>
+      <style>{`select option { background: var(--surface2); color: var(--text); }`}</style>
     </>
   );
 }
@@ -452,9 +453,9 @@ const Payments = () => {
         </div>
         <div className="card-body-flush">
           {loading ? (
-            <div style={{ padding: "32px", textAlign: "center", color: "#4a5f80", fontSize: 13 }}>Loading payments…</div>
+            <div style={{ padding: "32px", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>Loading payments…</div>
           ) : payments.length === 0 ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "#4a5f80", fontSize: 13 }}>
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>
               No payments recorded yet. Click <strong style={{ color: "#22d3a4" }}>Record Payment</strong> to add one.
             </div>
           ) : payments.map((p, i) => (

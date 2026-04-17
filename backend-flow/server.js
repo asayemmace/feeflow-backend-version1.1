@@ -10,24 +10,22 @@ const app = express();
 const prisma = new PrismaClient();
 
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://feeflowfrontendversion11wjpj.vercel.app"
-  ],
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
 }));
-app.options('*', cors());
 app.use(express.json());
-app.use(express.json());
+
+// ─── Plan limits ──────────────────────────────────────────────────────────────
+const PLAN_LIMITS = {
+  free: { students: 300, mpesa: false, invoices: false, receipts: false },
+  pro:  { students: 800, mpesa: true,  invoices: true,  receipts: false },
+  max:  { students: Infinity, mpesa: true, invoices: true, receipts: true },
+};
 
 // ─── Auth middleware ───────────────────────────────────────────────────────────
 const requireAuth = (req, res, next) => {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
+  if (!auth?.startsWith("Bearer ")) return res.status(401).json({ message: "Unauthorized" });
   try {
     const payload = jwt.verify(auth.split(" ")[1], process.env.JWT_SECRET);
     req.userId = payload.userId;
@@ -37,427 +35,335 @@ const requireAuth = (req, res, next) => {
   }
 };
 
+const requirePlan = (feature) => async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    const plan = user?.plan || "free";
+    if (!PLAN_LIMITS[plan]?.[feature]) {
+      return res.status(403).json({
+        message: `This feature requires a Pro or Max plan. You are on ${plan.toUpperCase()}.`,
+        upgradeRequired: true, feature,
+      });
+    }
+    req.user = user;
+    next();
+  } catch {
+    res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
 // ─── Register ─────────────────────────────────────────────────────────────────
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password, schoolName } = req.body;
-
-  if (!name || !email || !password) {
+  if (!name || !email || !password)
     return res.status(400).json({ message: "Name, email and password are required" });
-  }
-
   try {
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
+    if (await prisma.user.findUnique({ where: { email } }))
       return res.status(400).json({ message: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { name, email, password: hashedPassword, schoolName }
+      data: { name, email, password: await bcrypt.hash(password, 10), schoolName, plan: "free" },
     });
-
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.status(201).json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email, schoolName: user.schoolName }
-    });
-  } catch (error) {
-    console.error("Register error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+    res.status(201).json({ token, user: pick(user) });
+  } catch (e) { console.error(e); res.status(500).json({ message: "Something went wrong" }); }
 });
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
-  }
-
+  if (!email || !password) return res.status(400).json({ message: "Email and password required" });
   try {
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
-
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ message: "Invalid credentials" });
-
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email, schoolName: user.schoolName }
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    if (!user || !await bcrypt.compare(password, user.password))
+      return res.status(401).json({ message: "Invalid credentials" });
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+    res.json({ token, user: pick(user) });
+  } catch (e) { console.error(e); res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── KPI stats (protected) ────────────────────────────────────────────────────
-app.get("/api/stats", requireAuth, async (req, res) => {
+function pick(u) {
+  return { id: u.id, name: u.name, email: u.email, phone: u.phone, schoolName: u.schoolName, plan: u.plan, planExpiry: u.planExpiry };
+}
+
+// ─── Profile ──────────────────────────────────────────────────────────────────
+app.get("/api/auth/me", requireAuth, async (req, res) => {
   try {
-    const students = await prisma.student.findMany({ where: { userId: req.userId } });
-
-    const totalFee       = students.reduce((s, st) => s + st.fee, 0);
-    const totalCollected = students.reduce((s, st) => s + st.paid, 0);
-    const totalArrears   = totalFee - totalCollected;
-    const fullyPaid      = students.filter(s => s.paid >= s.fee).length;
-    const partial        = students.filter(s => s.paid > 0 && s.paid < s.fee).length;
-    const unpaid         = students.filter(s => s.paid === 0).length;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayPayments = await prisma.payment.findMany({
-      where: { userId: req.userId, createdAt: { gte: today } }
-    });
-    const collectedToday = todayPayments.reduce((s, p) => s + p.amount, 0);
-
-    res.json({
-      totalCollected,
-      totalArrears,
-      collectedToday,
-      paymentsToday: todayPayments.length,
-      totalStudents: students.length,
-      fullyPaid,
-      partial,
-      unpaid,
-    });
-  } catch (error) {
-    console.error("Stats error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user) return res.status(404).json({ message: "Not found" });
+    res.json(pick(user));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── Recent payments (protected) ──────────────────────────────────────────────
-app.get("/api/payments/recent", requireAuth, async (req, res) => {
+app.patch("/api/auth/profile", requireAuth, async (req, res) => {
+  const { name, phone, schoolName } = req.body;
   try {
-    const payments = await prisma.payment.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-      include: { student: true }
+    const user = await prisma.user.update({
+      where: { id: req.userId },
+      data: { ...(name && { name }), ...(phone !== undefined && { phone }), ...(schoolName !== undefined && { schoolName }) },
     });
-
-    const result = payments.map(p => ({
-      name:     p.student?.name || "Unknown",
-      initials: p.student?.name?.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase() || "??",
-      meta:     `${p.student?.cls || ""} · ${p.student?.adm || ""}`,
-      txn:      p.txnRef || "—",
-      amount:   `KES ${p.amount.toLocaleString()}`,
-      createdAt: p.createdAt,
-    }));
-
-    res.json(result);
-  } catch (error) {
-    console.error("Recent payments error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    res.json(pick(user));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── Top unpaid students (protected) ─────────────────────────────────────────
-app.get("/api/students/unpaid", requireAuth, async (req, res) => {
+app.patch("/api/auth/email", requireAuth, async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ message: "Email and current password required" });
   try {
-    const students = await prisma.student.findMany({
-      where: {
-        userId: req.userId,
-        paid: { lt: prisma.student.fields.fee }   // raw compare not valid — fix below
-      },
-      orderBy: { paid: "asc" },
-      take: 5,
-    });
-
-    // Filter in JS since Prisma can't compare two columns directly
-    const unpaid = await prisma.student.findMany({
-      where: { userId: req.userId },
-      orderBy: { paid: "asc" },
-    });
-
-    const result = unpaid
-      .filter(s => s.paid < s.fee)
-      .slice(0, 5)
-      .map((s, i) => ({
-        rank:  i + 1,
-        name:  s.name,
-        cls:   s.cls,
-        bal:   `KES ${(s.fee - s.paid).toLocaleString()}`,
-        days:  s.daysOverdue > 0 ? `${s.daysOverdue} days overdue` : "Pending",
-      }));
-
-    res.json(result);
-  } catch (error) {
-    console.error("Unpaid students error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!await bcrypt.compare(password, user.password))
+      return res.status(401).json({ message: "Current password is incorrect" });
+    const exists = await prisma.user.findUnique({ where: { email } });
+    if (exists && exists.id !== req.userId) return res.status(400).json({ message: "Email already in use" });
+    const updated = await prisma.user.update({ where: { id: req.userId }, data: { email } });
+    res.json(pick(updated));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── GET all students (protected) ─────────────────────────────────────────────
-app.get("/api/students", requireAuth, async (req, res) => {
+app.patch("/api/auth/password", requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) return res.status(400).json({ message: "Both passwords required" });
+  if (newPassword.length < 6) return res.status(400).json({ message: "Min 6 characters" });
   try {
-    const students = await prisma.student.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(students);
-  } catch (error) {
-    console.error("Get students error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!await bcrypt.compare(currentPassword, user.password))
+      return res.status(401).json({ message: "Current password is incorrect" });
+    await prisma.user.update({ where: { id: req.userId }, data: { password: await bcrypt.hash(newPassword, 10) } });
+    res.json({ message: "Password updated" });
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── POST create student (protected) ──────────────────────────────────────────
-app.post("/api/students", requireAuth, async (req, res) => {
-  const { name, cls, fee, paid, phone, adm } = req.body;
-
-  if (!name || !cls || fee == null) {
-    return res.status(400).json({ message: "Name, class and fee are required" });
-  }
-
-  try {
-    // adm must be unique — generate one if not provided
-    const admNo = adm?.trim() || `ADM-${Date.now()}`;
-
-    const existing = await prisma.student.findUnique({ where: { adm: admNo } });
-    if (existing) {
-      return res.status(400).json({ message: "Admission number already exists" });
-    }
-
-    const student = await prisma.student.create({
-      data: {
-        name:   name.trim(),
-        cls,
-        fee:    parseFloat(fee),
-        paid:   parseFloat(paid) || 0,
-        adm:    admNo,
-        userId: req.userId,
-      },
-    });
-    res.status(201).json(student);
-  } catch (error) {
-    console.error("Create student error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PASTE THESE ROUTES INTO server.js BEFORE the health check route
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// ─── GET all terms for user ────────────────────────────────────────────────────
+// ─── Terms ────────────────────────────────────────────────────────────────────
 app.get("/api/terms", requireAuth, async (req, res) => {
   try {
-    const terms = await prisma.term.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(terms);
-  } catch (error) {
-    console.error("Get terms error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    res.json(await prisma.term.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } }));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── POST create a new term (closes any active term first) ────────────────────
 app.post("/api/terms", requireAuth, async (req, res) => {
   const { name, startDate, endDate } = req.body;
-  if (!name || !startDate || !endDate) {
-    return res.status(400).json({ message: "name, startDate and endDate are required" });
-  }
+  if (!name || !startDate || !endDate) return res.status(400).json({ message: "All fields required" });
   try {
-    // Close any currently active term
-    await prisma.term.updateMany({
-      where: { userId: req.userId, status: "active" },
-      data: { status: "closed" },
-    });
-
+    await prisma.term.updateMany({ where: { userId: req.userId, status: "active" }, data: { status: "closed" } });
     const term = await prisma.term.create({
-      data: {
-        name,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-        status: "active",
-        userId: req.userId,
-      },
+      data: { name, startDate: new Date(startDate), endDate: new Date(endDate), status: "active", userId: req.userId },
     });
     res.status(201).json(term);
-  } catch (error) {
-    console.error("Create term error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── GET term export (PDF or Excel) ───────────────────────────────────────────
-// NOTE: This is a stub — wire up your PDF/Excel generation library here.
-// For Excel you can use 'xlsx' npm package; for PDF use 'pdfkit' or Gotenberg.
 app.get("/api/terms/:id/export", requireAuth, async (req, res) => {
-  const { format } = req.query; // "pdf" | "excel"
+  const { format } = req.query;
   try {
-    const term = await prisma.term.findFirst({
-      where: { id: req.params.id, userId: req.userId },
-    });
+    const term = await prisma.term.findFirst({ where: { id: req.params.id, userId: req.userId } });
     if (!term) return res.status(404).json({ message: "Term not found" });
-
     const students = await prisma.student.findMany({ where: { userId: req.userId } });
-    const payments = await prisma.payment.findMany({
-      where: { userId: req.userId },
-      include: { student: true },
-    });
+    const payments = await prisma.payment.findMany({ where: { userId: req.userId, termId: req.params.id }, include: { student: true } });
 
     if (format === "excel") {
-      // Install: npm install xlsx
-      const XLSX = await import("xlsx");
-      const rows = students.map((s) => ({
-        Name: s.name,
-        "Adm No": s.adm,
-        Class: s.cls,
-        "Term Fee": s.fee,
-        Paid: s.paid,
-        Balance: s.fee - s.paid,
-        Status: s.paid >= s.fee ? "Paid" : s.paid > 0 ? "Partial" : "Overdue",
-      }));
-      const ws = XLSX.utils.json_to_sheet(rows);
+      const XLSX = (await import("xlsx")).default;
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Students");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(students.map((s) => ({
+        "Student Name": s.name, "Adm No": s.adm, Class: s.cls, Phone: s.phone || "—",
+        "Term Fee (KES)": s.fee, "Paid (KES)": s.paid, "Balance (KES)": s.fee - s.paid,
+        Status: s.paid >= s.fee ? "Paid" : s.paid > 0 ? "Partial" : "Overdue",
+      }))), "Students");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(payments.map((p) => ({
+        Date: new Date(p.createdAt).toLocaleDateString("en-KE"), Student: p.student?.name || "—",
+        "Amount (KES)": p.amount, Method: p.method, "TXN Ref": p.txnRef || "—",
+      }))), "Payments");
       const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
       res.setHeader("Content-Disposition", `attachment; filename="${term.name}.xlsx"`);
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       return res.send(buf);
     }
-
-    // PDF stub — replace with Gotenberg or pdfkit
-    res.status(501).json({ message: "PDF export not yet implemented. Wire up Gotenberg here." });
-  } catch (error) {
-    console.error("Export error:", error);
-    res.status(500).json({ message: "Export failed" });
-  }
+    res.status(501).json({ message: "PDF export: integrate Gotenberg on your VPS." });
+  } catch (e) { console.error(e); res.status(500).json({ message: "Export failed" }); }
 });
 
-// ─── POST record a payment ─────────────────────────────────────────────────────
-app.post("/api/payments", requireAuth, async (req, res) => {
-  const { studentId, amount, txnRef, method } = req.body;
-  if (!studentId || !amount) {
-    return res.status(400).json({ message: "studentId and amount are required" });
-  }
+// ─── Students ─────────────────────────────────────────────────────────────────
+app.get("/api/students", requireAuth, async (req, res) => {
   try {
-    const student = await prisma.student.findFirst({
-      where: { id: studentId, userId: req.userId },
-    });
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    res.json(await prisma.student.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } }));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
 
+app.post("/api/students", requireAuth, async (req, res) => {
+  const { name, cls, fee, paid, phone, adm } = req.body;
+  if (!name || !cls || fee == null) return res.status(400).json({ message: "Name, class and fee required" });
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    const limit = PLAN_LIMITS[user?.plan || "free"]?.students ?? 300;
+    const count = await prisma.student.count({ where: { userId: req.userId } });
+    if (count >= limit)
+      return res.status(403).json({ message: `${user?.plan?.toUpperCase() || "FREE"} plan limit is ${limit} students. Upgrade to add more.`, upgradeRequired: true });
+
+    const admNo = adm?.trim() || `ADM-${Date.now()}`;
+    if (await prisma.student.findUnique({ where: { adm: admNo } }))
+      return res.status(400).json({ message: "Admission number already exists" });
+
+    const student = await prisma.student.create({
+      data: { name: name.trim(), cls, fee: parseFloat(fee), paid: parseFloat(paid) || 0, adm: admNo, phone: phone?.trim() || null, userId: req.userId },
+    });
+    res.status(201).json(student);
+  } catch (e) { console.error(e); res.status(500).json({ message: "Something went wrong" }); }
+});
+
+app.patch("/api/students/:id", requireAuth, async (req, res) => {
+  try {
+    const student = await prisma.student.findFirst({ where: { id: req.params.id, userId: req.userId } });
+    if (!student) return res.status(404).json({ message: "Not found" });
+    const { name, cls, fee, paid, phone } = req.body;
+    res.json(await prisma.student.update({
+      where: { id: req.params.id },
+      data: { ...(name && { name }), ...(cls && { cls }), ...(fee != null && { fee: parseFloat(fee) }), ...(paid != null && { paid: parseFloat(paid) }), ...(phone !== undefined && { phone }) },
+    }));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+app.delete("/api/students/:id", requireAuth, async (req, res) => {
+  try {
+    const s = await prisma.student.findFirst({ where: { id: req.params.id, userId: req.userId } });
+    if (!s) return res.status(404).json({ message: "Not found" });
+    await prisma.payment.deleteMany({ where: { studentId: req.params.id } });
+    await prisma.student.delete({ where: { id: req.params.id } });
+    res.json({ message: "Deleted" });
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+app.get("/api/students/unpaid", requireAuth, async (req, res) => {
+  try {
+    const students = await prisma.student.findMany({ where: { userId: req.userId } });
+    res.json(
+      students.filter((s) => s.paid < s.fee)
+        .sort((a, b) => (b.fee - b.paid) - (a.fee - a.paid))
+        .slice(0, 5)
+        .map((s, i) => ({ rank: i + 1, name: s.name, cls: s.cls, bal: `KES ${(s.fee - s.paid).toLocaleString()}`, days: s.daysOverdue > 0 ? `${s.daysOverdue} days overdue` : "Pending" }))
+    );
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+app.get("/api/stats", requireAuth, async (req, res) => {
+  try {
+    const students = await prisma.student.findMany({ where: { userId: req.userId } });
+    const totalFee = students.reduce((s, st) => s + st.fee, 0);
+    const totalCollected = students.reduce((s, st) => s + st.paid, 0);
+    const totalArrears = totalFee - totalCollected;
+    const fullyPaid = students.filter((s) => s.paid >= s.fee).length;
+    const partial = students.filter((s) => s.paid > 0 && s.paid < s.fee).length;
+    const unpaid = students.filter((s) => s.paid === 0).length;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayPayments = await prisma.payment.findMany({ where: { userId: req.userId, createdAt: { gte: today } } });
+    const collectedToday = todayPayments.reduce((s, p) => s + p.amount, 0);
+    res.json({
+      totalCollected, totalArrears, collectedToday, paymentsToday: todayPayments.length,
+      totalStudents: students.length, fullyPaid, partial, unpaid,
+      items: [
+        { label: "Total Collected", value: `KES ${totalCollected.toLocaleString()}`, sub: `KES ${totalFee.toLocaleString()} expected`, progress: totalFee > 0 ? Math.round((totalCollected / totalFee) * 100) : 0, badge: `${totalFee > 0 ? Math.round((totalCollected / totalFee) * 100) : 0}% collected`, badgeBg: "rgba(34,211,164,0.1)", badgeColor: "var(--green)", iconBg: "rgba(34,211,164,0.08)", iconBorder: "rgba(34,211,164,0.15)" },
+        { label: "Outstanding Arrears", value: `KES ${totalArrears.toLocaleString()}`, sub: `${unpaid + partial} students with balances`, progress: totalFee > 0 ? Math.round((totalArrears / totalFee) * 100) : 0, progressClass: "warn", iconBg: "rgba(248,113,113,0.08)", iconBorder: "rgba(248,113,113,0.15)" },
+        { label: "Enrolled Students", value: students.length, sub: `${fullyPaid} fully paid · ${partial} partial`, progress: students.length > 0 ? Math.round((fullyPaid / students.length) * 100) : 0, iconBg: "rgba(59,130,246,0.08)", iconBorder: "rgba(59,130,246,0.15)" },
+      ],
+    });
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
+app.get("/api/payments/recent", requireAuth, async (req, res) => {
+  try {
+    const { termId } = req.query;
+    const payments = await prisma.payment.findMany({
+      where: { userId: req.userId, ...(termId && { termId }) },
+      orderBy: { createdAt: "desc" }, take: 30, include: { student: true },
+    });
+    res.json(payments.map((p) => ({
+      id: p.id,
+      name: p.student?.name || "Unknown",
+      initials: (p.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      meta: `${p.student?.cls || ""} · ${p.student?.adm || ""}`,
+      txn: p.txnRef || "—",
+      amount: `KES ${p.amount.toLocaleString()}`,
+      method: p.method,
+      time: new Date(p.createdAt).toLocaleString("en-KE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+    })));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+app.post("/api/payments", requireAuth, async (req, res) => {
+  const { studentId, amount, txnRef, method, termId } = req.body;
+  if (!studentId || !amount) return res.status(400).json({ message: "studentId and amount required" });
+  try {
+    const student = await prisma.student.findFirst({ where: { id: studentId, userId: req.userId } });
+    if (!student) return res.status(404).json({ message: "Student not found" });
     const payment = await prisma.payment.create({
-      data: {
-        amount: parseFloat(amount),
-        txnRef: txnRef || null,
-        studentId,
-        userId: req.userId,
-      },
+      data: { amount: parseFloat(amount), txnRef: txnRef || null, method: method || "mpesa", studentId, userId: req.userId, termId: termId || null },
       include: { student: true },
     });
-
-    // Update student's paid amount
-    await prisma.student.update({
-      where: { id: studentId },
-      data: { paid: { increment: parseFloat(amount) } },
+    await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: parseFloat(amount) } } });
+    res.status(201).json({
+      ...payment, name: payment.student?.name,
+      initials: (payment.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      meta: `${payment.student?.cls || ""} · ${payment.student?.adm || ""}`,
+      txn: payment.txnRef || "—", amount: `KES ${payment.amount.toLocaleString()}`, time: "Just now",
     });
-
-    res.status(201).json(payment);
-  } catch (error) {
-    console.error("Record payment error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+  } catch (e) { console.error(e); res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── GET unmatched payments ────────────────────────────────────────────────────
-// These are M-Pesa callbacks that could not be matched to a student.
-// Store them in an UnmatchedPayment table or return empty array for now.
 app.get("/api/payments/unmatched", requireAuth, async (req, res) => {
   try {
-    // If you add an UnmatchedPayment model later, query it here.
-    // For now returns empty array so the UI renders cleanly.
-    res.json([]);
-  } catch (error) {
-    console.error("Unmatched payments error:", error);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+    const list = await prisma.unmatchedPayment.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } });
+    res.json(list.map((p) => ({ id: p.id, phone: p.phone, txn: p.txnRef || "—", amount: `KES ${p.amount.toLocaleString()}`, time: new Date(p.createdAt).toLocaleString("en-KE") })));
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── POST STK Push ─────────────────────────────────────────────────────────────
-// Triggers M-Pesa STK push via Daraja API.
-// Replace the stub below with your real Daraja Consumer Key / Secret.
-app.post("/api/payments/stk", requireAuth, async (req, res) => {
+// ─── STK Push (Pro/Max only) ──────────────────────────────────────────────────
+app.post("/api/payments/stk", requireAuth, requirePlan("mpesa"), async (req, res) => {
   const { studentId, amount, phone } = req.body;
-  if (!studentId || !amount || !phone) {
-    return res.status(400).json({ message: "studentId, amount and phone are required" });
-  }
+  if (!studentId || !amount || !phone) return res.status(400).json({ message: "studentId, amount and phone required" });
 
-  const CONSUMER_KEY    = process.env.MPESA_CONSUMER_KEY;
-  const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET;
-  const SHORTCODE       = process.env.MPESA_SHORTCODE;
-  const PASSKEY         = process.env.MPESA_PASSKEY;
-  const CALLBACK_URL    = process.env.MPESA_CALLBACK_URL;
+  const CK = process.env.MPESA_CONSUMER_KEY, CS = process.env.MPESA_CONSUMER_SECRET;
+  const SC = process.env.MPESA_SHORTCODE, PK = process.env.MPESA_PASSKEY, CB = process.env.MPESA_CALLBACK_URL;
 
-  if (!CONSUMER_KEY || !CONSUMER_SECRET) {
-    return res.status(503).json({ message: "M-Pesa not configured. Add MPESA_CONSUMER_KEY and MPESA_CONSUMER_SECRET to .env" });
-  }
+  if (!CK || !CS) return res.status(503).json({ message: "M-Pesa not configured on server" });
 
   try {
-    // 1. Get access token
-    const auth = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString("base64");
-    const tokenRes = await fetch(
-      "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
-      { headers: { Authorization: `Basic ${auth}` } }
-    );
-    const { access_token } = await tokenRes.json();
-
-    // 2. Build STK push request
-    const timestamp = new Date().toISOString().replace(/[-T:.Z]/g, "").slice(0, 14);
-    const password  = Buffer.from(`${SHORTCODE}${PASSKEY}${timestamp}`).toString("base64");
-
-    const stkRes = await fetch(
-      "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          BusinessShortCode: SHORTCODE,
-          Password: password,
-          Timestamp: timestamp,
-          TransactionType: "CustomerPayBillOnline",
-          Amount: Math.round(amount),
-          PartyA: phone,
-          PartyB: SHORTCODE,
-          PhoneNumber: phone,
-          CallBackURL: CALLBACK_URL,
-          AccountReference: `Student-${studentId}`,
-          TransactionDesc: "School fee payment",
-        }),
-      }
-    );
-    const stkData = await stkRes.json();
-
-    if (stkData.ResponseCode === "0") {
-      res.json({ success: true, checkoutRequestId: stkData.CheckoutRequestID });
-    } else {
-      res.status(400).json({ message: stkData.errorMessage || "STK push failed" });
-    }
-  } catch (error) {
-    console.error("STK push error:", error);
-    res.status(500).json({ message: "STK push failed. Check your Daraja credentials." });
-  }
+    const auth = Buffer.from(`${CK}:${CS}`).toString("base64");
+    const { access_token } = await (await fetch("https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials", { headers: { Authorization: `Basic ${auth}` } })).json();
+    const ts = new Date().toISOString().replace(/[-T:.Z]/g, "").slice(0, 14);
+    const pw = Buffer.from(`${SC}${PK}${ts}`).toString("base64");
+    const d  = await (await fetch("https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ BusinessShortCode: SC, Password: pw, Timestamp: ts, TransactionType: "CustomerPayBillOnline", Amount: Math.round(amount), PartyA: phone, PartyB: SC, PhoneNumber: phone, CallBackURL: CB, AccountReference: `FF-${studentId}`, TransactionDesc: "School fee payment" }),
+    })).json();
+    d.ResponseCode === "0" ? res.json({ success: true, checkoutRequestId: d.CheckoutRequestID }) : res.status(400).json({ message: d.errorMessage || "STK push failed" });
+  } catch (e) { console.error(e); res.status(500).json({ message: "STK push failed" }); }
 });
 
-// ─── Health check ──────────────────────────────────────────────────────────────
-app.get("/health", (_, res) => res.json({ status: "ok" }));
+// ─── M-Pesa C2B Callback ──────────────────────────────────────────────────────
+app.post("/api/mpesa/callback", async (req, res) => {
+  try {
+    const cb = req.body?.Body?.stkCallback;
+    if (cb?.ResultCode === 0) {
+      const items = cb.CallbackMetadata?.Item || [];
+      const get = (n) => items.find((i) => i.Name === n)?.Value;
+      const amount = get("Amount"), ref = get("MpesaReceiptNumber"), phone = get("PhoneNumber")?.toString();
+      const studentId = (cb.AccountReference || "").replace("FF-", "");
+      const student = await prisma.student.findUnique({ where: { id: studentId } });
+      if (student) {
+        await prisma.payment.create({ data: { amount: parseFloat(amount), txnRef: ref, method: "mpesa", studentId, userId: student.userId } });
+        await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: parseFloat(amount) } } });
+      }
+    }
+  } catch (e) { console.error("Callback error:", e); }
+  res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+});
+
+// ─── Health ────────────────────────────────────────────────────────────────────
+app.get("/health", (_, res) => res.json({ ok: true, version: "2.0" }));
 
 const PORT = process.env.PORT || 3000;
-// ✅ After
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 3000
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`)
-  })
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => console.log(`FeeFlow API → http://localhost:${PORT}`));
 }
 
-export default app
+export default app;
