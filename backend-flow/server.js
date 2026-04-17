@@ -362,8 +362,6 @@ app.post("/api/mpesa/callback", async (req, res) => {
 app.get("/health", (_, res) => res.json({ ok: true, version: "2.0" }));
 
 const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== "production") {
-  app.listen(PORT, () => console.log(`FeeFlow API → http://localhost:${PORT}`));
-}
-
-export default app;
+app.listen(process.env.PORT || 3000, "0.0.0.0", () => {
+  console.log(`FeeFlow API running on port ${process.env.PORT || 3000}`);
+});
