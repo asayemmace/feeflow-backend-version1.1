@@ -1,3 +1,4 @@
+// [cite: 1]
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,6 +15,7 @@ model User {
   email      String    @unique
   password   String
   schoolName String?
+  plan       String    @default("free") // <--- ADDED THIS LINE
   createdAt  DateTime  @default(now())
   students   Student[]
   payments   Payment[]
@@ -38,11 +40,12 @@ model Payment {
   id        String   @id @default(uuid())
   amount    Float
   txnRef    String?
+  method    String   @default("manual")
   studentId String
   student   Student  @relation(fields: [studentId], references: [id])
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  createdAt DateTime @now()
 }
 
 model Term {
