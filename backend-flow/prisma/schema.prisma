@@ -1,4 +1,3 @@
-// [cite: 1]
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,26 +9,31 @@ datasource db {
 }
 
 model User {
-  id         String    @id @default(uuid())
-  name       String
-  email      String    @unique
-  password   String
-  schoolName String?
-  plan       String    @default("free") // <--- ADDED THIS LINE
-  createdAt  DateTime  @default(now())
-  students   Student[]
-  payments   Payment[]
-  terms      Term[]
+  id               String             @id @default(uuid())
+  name             String
+  email            String             @unique
+  password         String
+  phone            String?
+  schoolName       String?
+  plan             String             @default("free")
+  planExpiry       DateTime?
+  createdAt        DateTime           @default(now())
+  students         Student[]
+  payments         Payment[]
+  terms            Term[]
+  unmatchedPayments UnmatchedPayment[]
 }
 
 model Student {
   id          String    @id @default(uuid())
   name        String
   adm         String    @unique
-  cls         String
+  cls         String    @default("")
   fee         Float     @default(0)
   paid        Float     @default(0)
+  phone       String?
   daysOverdue Int       @default(0)
+  termId      String?
   userId      String
   user        User      @relation(fields: [userId], references: [id])
   createdAt   DateTime  @default(now())
@@ -41,11 +45,12 @@ model Payment {
   amount    Float
   txnRef    String?
   method    String   @default("manual")
+  termId    String?
   studentId String
   student   Student  @relation(fields: [studentId], references: [id])
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @now()
+  createdAt DateTime @default(now())  // fixed: was @now() which is invalid
 }
 
 model Term {
@@ -54,6 +59,16 @@ model Term {
   startDate DateTime
   endDate   DateTime
   status    String   @default("active")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model UnmatchedPayment {
+  id        String   @id @default(uuid())
+  phone     String?
+  txnRef    String?
+  amount    Float
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
