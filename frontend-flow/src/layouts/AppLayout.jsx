@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,7 +11,7 @@ const PLAN_META = {
   max:  { label: 'Max',   color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.25)' },
 };
 
-// ─── User Settings Modal ───────────────────────────────────────────────────────
+// ─── User Settings Modal ────────────────────────────────────────────────────────
 function UserSettingsModal({ onClose }) {
   const { user, plan, updateUser, logout, theme, toggleTheme } = useAuth();
   const navigate = useNavigate();
@@ -20,12 +20,12 @@ function UserSettingsModal({ onClose }) {
   const [success, setSuccess] = useState('');
   const [error, setError]   = useState('');
 
-  const [profile, setProfile] = useState({ name: user?.name || '', phone: user?.phone || '', schoolName: user?.schoolName || '' });
-  const [emailForm, setEmailForm]   = useState({ email: user?.email || '', password: '' });
-  const [pwForm, setPwForm]         = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [profile, setProfile]     = useState({ name: user?.name || '', phone: user?.phone || '', schoolName: user?.schoolName || '' });
+  const [emailForm, setEmailForm] = useState({ email: user?.email || '', password: '' });
+  const [pwForm, setPwForm]       = useState({ currentPassword: '', newPassword: '', confirm: '' });
 
   const showSuccess = (msg) => { setSuccess(msg); setError(''); setTimeout(() => setSuccess(''), 3000); };
-  const showError   = (msg) => { setError(msg);   setSuccess(''); };
+  const showError   = (msg) => { setError(msg); setSuccess(''); };
 
   const saveProfile = async () => {
     setSaving(true);
@@ -61,8 +61,7 @@ function UserSettingsModal({ onClose }) {
     finally { setSaving(false); }
   };
 
-  const pm = PLAN_META[plan] || PLAN_META.free;
-
+  const pm  = PLAN_META[plan] || PLAN_META.free;
   const inp = 'settings-input';
   const lbl = 'settings-label';
 
@@ -70,7 +69,7 @@ function UserSettingsModal({ onClose }) {
     { id: 'profile',  label: 'Profile' },
     { id: 'email',    label: 'Email' },
     { id: 'password', label: 'Password' },
-    { id: 'plan',     label: 'Plan & Billing' },
+    { id: 'plan',     label: 'Plan' },
     { id: 'display',  label: 'Display' },
   ];
 
@@ -91,7 +90,11 @@ function UserSettingsModal({ onClose }) {
           {/* Tabs */}
           <div className="settings-tabs">
             {tabs.map(t => (
-              <button key={t.id} className={`settings-tab${tab === t.id ? ' active' : ''}`} onClick={() => { setTab(t.id); setSuccess(''); setError(''); }}>
+              <button
+                key={t.id}
+                className={`settings-tab${tab === t.id ? ' active' : ''}`}
+                onClick={() => { setTab(t.id); setSuccess(''); setError(''); }}
+              >
                 {t.label}
               </button>
             ))}
@@ -110,7 +113,7 @@ function UserSettingsModal({ onClose }) {
               </div>
               <div className="field-group">
                 <label className={lbl}>Phone number</label>
-                <input className={inp} value={profile.phone} onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} placeholder="07XX XXX XXX" />
+                <input className={inp} type="tel" value={profile.phone} onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} placeholder="07XX XXX XXX" />
               </div>
               <div className="field-group">
                 <label className={lbl}>School / Institution name</label>
@@ -125,9 +128,7 @@ function UserSettingsModal({ onClose }) {
           {/* Email tab */}
           {tab === 'email' && (
             <div className="settings-fields">
-              <div className="settings-info-box">
-                Current email: <strong>{user?.email}</strong>
-              </div>
+              <div className="settings-info-box">Current email: <strong>{user?.email}</strong></div>
               <div className="field-group">
                 <label className={lbl}>New email address</label>
                 <input className={inp} type="email" value={emailForm.email} onChange={e => setEmailForm(f => ({ ...f, email: e.target.value }))} placeholder="new@email.com" />
@@ -173,7 +174,6 @@ function UserSettingsModal({ onClose }) {
                 {plan === 'pro'  && <div className="plan-current-sub">Up to 800 students · M-Pesa + WhatsApp invoices</div>}
                 {plan === 'max'  && <div className="plan-current-sub">Unlimited students · Full automation + instant receipts</div>}
               </div>
-
               {plan === 'free' && (
                 <div className="plan-upgrade-options">
                   <div className="plan-upgrade-card" style={{ borderColor: 'rgba(34,211,164,0.25)' }}>
@@ -213,9 +213,7 @@ function UserSettingsModal({ onClose }) {
                   ))}
                 </div>
               </div>
-              <div className="settings-info-box">
-                Theme preference is saved to your browser.
-              </div>
+              <div className="settings-info-box">Theme preference is saved to your browser.</div>
             </div>
           )}
         </div>
@@ -234,25 +232,61 @@ function UserSettingsModal({ onClose }) {
   );
 }
 
-// ─── App Layout ────────────────────────────────────────────────────────────────
+// ─── App Layout ─────────────────────────────────────────────────────────────────
 export default function AppLayout() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { user, plan } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
+  const [sidebarOpen, setSidebarOpen]   = useState(false);
   const pm = PLAN_META[plan] || PLAN_META.free;
 
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
+
+  // Prevent body scroll when sidebar is open on mobile
+  useEffect(() => {
+    if (sidebarOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [sidebarOpen]);
+
   const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg> },
-    { path: '/students',  label: 'Students',  icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg> },
-    { path: '/payments',  label: 'Payments',  icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg> },
+    {
+      path: '/dashboard', label: 'Dashboard',
+      icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>,
+    },
+    {
+      path: '/students', label: 'Students',
+      icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>,
+    },
+    {
+      path: '/payments', label: 'Payments',
+      icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>,
+    },
   ];
 
   return (
     <div className="app-layout">
+      {/* Mobile sidebar overlay */}
+      <div
+        className={`sidebar-overlay${sidebarOpen ? ' open' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
       {/* Sidebar */}
-      <aside className="sidebar">
-        <div className="sidebar-logo">
+      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
+        <div
+          className="sidebar-logo"
+          onClick={() => navigate('/')}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+          title="Go to homepage"
+        >
           <div className="logo-mark">
             <div className="logo-icon">F</div>
             <div>
@@ -275,9 +309,9 @@ export default function AppLayout() {
           ))}
         </nav>
 
-        {/* User card at bottom — click opens settings */}
+        {/* User card — opens settings */}
         <div className="sidebar-user">
-          <button className="user-card" onClick={() => setShowSettings(true)}>
+          <button className="user-card" onClick={() => { setShowSettings(true); setSidebarOpen(false); }}>
             <div className="user-avatar">
               {(user?.name || 'U').split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()}
             </div>
@@ -292,12 +326,16 @@ export default function AppLayout() {
         </div>
       </aside>
 
-      {/* Main scroll area — this is the scroll container, NOT the window */}
+      {/* Main scroll area */}
       <main className="main-content">
-        <Outlet />
+        {/* Inject hamburger context so pages can show it in topbar */}
+        <Outlet context={{ openSidebar: () => setSidebarOpen(true) }} />
       </main>
 
       {showSettings && <UserSettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }
+
+// ─── Hook for pages to access sidebar opener ────────────────────────────────────
+export { useOutletContext } from 'react-router-dom';

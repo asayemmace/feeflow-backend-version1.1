@@ -51,13 +51,13 @@
 
 4. **Deploy:**
    - Click "Deploy"
-   - Your frontend will be live at a Vercel URL
+   - Your frontend will be live at a Netlify URL
 
 ---
 
 ## Important Notes
 
-- After deploying the backend to Render, update the `FRONTEND_URL` in Render's environment variables with your Vercel frontend URL for CORS to work correctly
+- After deploying the backend to Render, update the `FRONTEND_URL` in Render's environment variables with your Netlify frontend URL for CORS to work correctly
 - Keep your JWT_SECRET secure - generate a strong random string
 - The `render.yaml` file handles the build and start commands automatically
 - Both platforms offer free tiers, though they have limitations (Render free tier sleeps after 15 min of inactivity)

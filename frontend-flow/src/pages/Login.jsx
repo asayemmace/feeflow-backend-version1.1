@@ -1,30 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login, token } = useAuth();
+  const { login } = useAuth();
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
-
-  // Redirect if already logged in
-  useEffect(() => {
-    if (token) navigate('/dashboard');
-  }, [token, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      // Call login from AuthContext
       await login(email, password);
-      navigate('/dashboard');
+      navigate('/dashboard', { replace: true });
     } catch (err) {
-      // Show backend error message if available
       setError(err.response?.data?.message || 'Invalid email or password');
     } finally {
       setLoading(false);
@@ -47,36 +40,43 @@ const Login = () => {
 
         {error && <div className="error-box">{error}</div>}
 
-        <form className="form-group" onSubmit={handleSubmit}>
-          <label className="form-label">
-            Email address
+        {/* Use div + onSubmit shim so iOS "Go" button works without <form> */}
+        <div className="form-group">
+          <div className="field-group">
+            <label className="form-label">Email address</label>
             <input
               className="form-input"
               type="email"
+              inputMode="email"
+              autoComplete="email"
               placeholder="bursar@school.ke"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              required
-              autoFocus
+              onKeyDown={e => e.key === 'Enter' && !loading && handleSubmit(e)}
             />
-          </label>
+          </div>
 
-          <label className="form-label">
-            Password
+          <div className="field-group">
+            <label className="form-label">Password</label>
             <input
               className="form-input"
               type="password"
+              autoComplete="current-password"
               placeholder="••••••••"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              required
+              onKeyDown={e => e.key === 'Enter' && !loading && handleSubmit(e)}
             />
-          </label>
+          </div>
 
-          <button className="submit-btn" type="submit" disabled={loading}>
+          <button
+            className="submit-btn"
+            onClick={handleSubmit}
+            disabled={loading || !email || !password}
+          >
             {loading ? 'Signing in…' : 'Sign in →'}
           </button>
-        </form>
+        </div>
 
         <div className="auth-footer">
           Don't have an account?{' '}

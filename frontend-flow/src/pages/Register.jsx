@@ -1,40 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Register = () => {
   const navigate = useNavigate();
-  const { register, token } = useAuth();
+  const { register } = useAuth();
   const [form, setForm]       = useState({ name: '', email: '', schoolName: '', password: '', confirm: '' });
   const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Redirect if already logged in
-  useEffect(() => {
-    if (token) navigate('/dashboard');
-  }, [token, navigate]);
-
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     setError('');
 
-    // Basic validation
-    if (form.password !== form.confirm) {
-      setError('Passwords do not match');
-      return;
-    }
-    if (form.password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
+    if (form.password !== form.confirm) return setError('Passwords do not match');
+    if (form.password.length < 6)      return setError('Password must be at least 6 characters');
+    if (!form.name.trim())             return setError('Please enter your name');
+    if (!form.email.trim())            return setError('Please enter your email');
 
     setLoading(true);
     try {
-      // Call register from AuthContext
-      await register(form.name, form.email, form.password, form.schoolName);
-      navigate('/dashboard');
+      await register(form.name.trim(), form.email.trim(), form.password, form.schoolName.trim());
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');
     } finally {
@@ -42,8 +31,11 @@ const Register = () => {
     }
   };
 
+  const canSubmit = form.name && form.email && form.password && form.confirm && !loading;
+
   return (
     <div className="auth-page">
+      {/* slightly wider card for 5-field form, still mobile-safe */}
       <div className="auth-card" style={{ maxWidth: 440 }}>
         <div className="auth-header">
           <div className="auth-logo-wrap">
@@ -58,72 +50,77 @@ const Register = () => {
 
         {error && <div className="error-box">{error}</div>}
 
-        <form className="form-group" onSubmit={handleSubmit}>
-          <label className="form-label">
-            Your name
+        <div className="form-group">
+          <div className="field-group">
+            <label className="form-label">Your name</label>
             <input
               className="form-input"
               type="text"
+              autoComplete="name"
               placeholder="Jane Wanjiku"
               value={form.name}
               onChange={set('name')}
-              required
-              autoFocus
             />
-          </label>
+          </div>
 
-          <label className="form-label">
-            School name
+          <div className="field-group">
+            <label className="form-label">School name</label>
             <input
               className="form-input"
               type="text"
+              autoComplete="organization"
               placeholder="Sunrise High School"
               value={form.schoolName}
               onChange={set('schoolName')}
-              required
             />
-          </label>
+          </div>
 
-          <label className="form-label">
-            Email address
+          <div className="field-group">
+            <label className="form-label">Email address</label>
             <input
               className="form-input"
               type="email"
+              inputMode="email"
+              autoComplete="email"
               placeholder="bursar@school.ke"
               value={form.email}
               onChange={set('email')}
-              required
             />
-          </label>
+          </div>
 
-          <label className="form-label">
-            Password
+          <div className="field-group">
+            <label className="form-label">Password</label>
             <input
               className="form-input"
               type="password"
+              autoComplete="new-password"
               placeholder="Min. 6 characters"
               value={form.password}
               onChange={set('password')}
-              required
             />
-          </label>
+          </div>
 
-          <label className="form-label">
-            Confirm password
+          <div className="field-group">
+            <label className="form-label">Confirm password</label>
             <input
               className="form-input"
               type="password"
+              autoComplete="new-password"
               placeholder="Repeat password"
               value={form.confirm}
               onChange={set('confirm')}
-              required
+              onKeyDown={e => e.key === 'Enter' && canSubmit && handleSubmit()}
             />
-          </label>
+          </div>
 
-          <button className="submit-btn" type="submit" disabled={loading}>
+          <button
+            className="submit-btn"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+          >
             {loading ? 'Creating account…' : 'Create account →'}
           </button>
-        </form>
+        </div>
 
         <div className="auth-footer">
           Already have an account?{' '}

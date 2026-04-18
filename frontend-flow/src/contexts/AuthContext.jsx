@@ -6,15 +6,19 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(() => localStorage.getItem('ff_token') || null);
-  const [user,  setUser]  = useState(() => { try { return JSON.parse(localStorage.getItem('ff_user')) || null; } catch { return null; } });
+  const [user,  setUser]  = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ff_user')) || null; }
+    catch { return null; }
+  });
   const [theme, setTheme] = useState(() => localStorage.getItem('ff_theme') || 'dark');
 
+  // Keep axios Authorization header in sync with token
   useEffect(() => {
     if (token) axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     else delete axios.defaults.headers.common['Authorization'];
   }, [token]);
 
-  // Apply theme class to root
+  // Apply theme to <html> element
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('ff_theme', theme);
@@ -23,7 +27,8 @@ export const AuthProvider = ({ children }) => {
   const saveSession = (tok, usr) => {
     localStorage.setItem('ff_token', tok);
     localStorage.setItem('ff_user', JSON.stringify(usr));
-    setToken(tok); setUser(usr);
+    setToken(tok);
+    setUser(usr);
     axios.defaults.headers.common['Authorization'] = `Bearer ${tok}`;
   };
 
@@ -42,7 +47,8 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('ff_token');
     localStorage.removeItem('ff_user');
-    setToken(null); setUser(null);
+    setToken(null);
+    setUser(null);
     delete axios.defaults.headers.common['Authorization'];
   };
 
@@ -52,17 +58,25 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('ff_user', JSON.stringify(merged));
   };
 
-  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
 
-  // Helpers
+  // Plan helpers
   const plan = user?.plan || 'free';
-  const canUse = (feature) => {
-    const limits = { free: { mpesa: false, invoices: false, receipts: false, students: 300 }, pro: { mpesa: true, invoices: true, receipts: false, students: 800 }, max: { mpesa: true, invoices: true, receipts: true, students: Infinity } };
-    return limits[plan]?.[feature] ?? false;
+
+  const PLAN_LIMITS = {
+    free: { mpesa: false, invoices: false, receipts: false, students: 300 },
+    pro:  { mpesa: true,  invoices: true,  receipts: false, students: 800 },
+    max:  { mpesa: true,  invoices: true,  receipts: true,  students: Infinity },
   };
 
+  const canUse = (feature) => PLAN_LIMITS[plan]?.[feature] ?? false;
+
   return (
-    <AuthContext.Provider value={{ token, user, plan, login, register, logout, updateUser, canUse, theme, toggleTheme }}>
+    <AuthContext.Provider value={{
+      token, user, plan,
+      login, register, logout, updateUser,
+      canUse, theme, toggleTheme,
+    }}>
       {children}
     </AuthContext.Provider>
   );
@@ -70,6 +84,6 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be inside AuthProvider');
+  if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
 };
