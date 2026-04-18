@@ -112,7 +112,7 @@ function AddPaymentModal({ onClose, onAdded }) {
     setSaving(true); setError("");
     try {
       const res = await axios.post(`${API}/api/payments`,
-        { studentId: form.studentId, amount: amountNum, txnRef: form.txnRef || null, method: form.method },
+        { studentId: form.studentId, amount: amountNum, txnRef: form.txnRef || null },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       onAdded(res.data); onClose();

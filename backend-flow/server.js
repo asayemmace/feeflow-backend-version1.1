@@ -196,7 +196,7 @@ app.get("/api/students", requireAuth, async (req, res) => {
 });
 
 app.post("/api/students", requireAuth, async (req, res) => {
-  const { name, adm, cls, phone, fee, termId } = req.body;
+  const { name, adm, cls, fee } = req.body;
   if (!name || !adm) return res.status(400).json({ message: "Name and admission number required" });
   try {
     // Enforce plan student limit
@@ -207,7 +207,7 @@ app.post("/api/students", requireAuth, async (req, res) => {
       return res.status(403).json({ message: `Student limit reached for your plan (${limit}). Upgrade to add more.`, upgradeRequired: true });
 
     const student = await prisma.student.create({
-      data: { name, adm, cls: cls || "", phone: phone || "", fee: parseFloat(fee) || 0, paid: 0, userId: req.userId, termId: termId || null },
+      data: { name, adm, cls: cls || "", fee: parseFloat(fee) || 0, paid: 0, userId: req.userId },
     });
     res.status(201).json(student);
   } catch (e) {
@@ -340,7 +340,7 @@ app.get("/api/payments/recent", requireAuth, async (req, res) => {
 });
 
 app.post("/api/payments", requireAuth, async (req, res) => {
-  const { studentId, amount, txnRef, method, termId } = req.body;
+  const { studentId, amount, txnRef } = req.body;
   if (!studentId || !amount) return res.status(400).json({ message: "studentId and amount required" });
   try {
     const student = await prisma.student.findFirst({ where: { id: studentId, userId: req.userId } });
@@ -349,9 +349,7 @@ app.post("/api/payments", requireAuth, async (req, res) => {
       data: {
         amount: parseFloat(amount),
         txnRef: txnRef || null,
-        method: method || "mpesa",
         studentId, userId: req.userId,
-        termId: termId || null,
       },
       include: { student: true },
     });

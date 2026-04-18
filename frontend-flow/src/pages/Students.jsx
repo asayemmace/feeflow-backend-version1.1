@@ -114,7 +114,6 @@ function AddStudentModal({ onClose, onAdd }) {
       const res = await axios.post(`${API}/api/students`, {
         name: form.name.trim(), adm: form.adm.trim(),
         cls: form.cls, fee: feeNum, paid: paidNum,
-        phone: form.phone.trim(),
       }, { headers: { Authorization: `Bearer ${token}` } });
       onAdd(res.data);
       onClose();
