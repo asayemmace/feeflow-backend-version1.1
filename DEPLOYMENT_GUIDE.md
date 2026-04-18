@@ -1,4 +1,4 @@
-# Deployment Guide: Render (Backend) + Vercel (Frontend)
+# Deployment Guide: Render (Backend) + Netlify (Frontend)
 
 ## Backend Deployment to Render
 
@@ -15,7 +15,7 @@
 
 3. **Set Environment Variables in Render Dashboard:**
    - `JWT_SECRET` - Use a strong secret key
-   - `FRONTEND_URL` - Your Vercel frontend URL (e.g., `https://yourapp.vercel.app`)
+   - `FRONTEND_URL` - Your Netlify frontend URL (e.g., `https://yourapp.netlify.app`)
    - `DATABASE_URL` - Your PostgreSQL connection string
    - `DIRECT_URL` - Your PostgreSQL direct connection string (for Prisma migrations)
    
@@ -27,7 +27,7 @@
 
 ---
 
-## Frontend Deployment to Vercel
+## Frontend Deployment to Netlify
 
 1. **Update environment variable:**
    - Update `frontend-flow/.env` with your Render backend URL:
@@ -38,12 +38,15 @@
 2. **Push to GitHub:**
    - Commit and push your code to GitHub
 
-3. **Deploy to Vercel:**
-   - Go to [vercel.com](https://vercel.com) and sign up
-   - Click "Add New" → "Project"
+3. **Deploy to Netlify:**
+   - Go to [netlify.com](https://netlify.com) and sign up
+   - Click "Add new site" → "Import from Git"
    - Import your GitHub repository
-   - Select `frontend-flow` as the root directory
-   - Under "Environment Variables", add:
+   - Select `frontend-flow` as the base directory
+   - Under "Build settings", set:
+     - `Build command` = `npm run build`
+     - `Publish directory` = `dist`
+   - Under "Environment variables", add:
      - `VITE_API_URL` = Your Render backend URL
 
 4. **Deploy:**
