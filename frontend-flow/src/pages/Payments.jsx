@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import Topbar from "../components/Topbar";
+import Topbar from "../components/TopBar";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
