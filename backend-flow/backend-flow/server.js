@@ -172,24 +172,43 @@ app.patch("/api/auth/password", requireAuth, async (req, res) => {
 });
 
 // ─── Terms ────────────────────────────────────────────────────────────────────
-app.get("/api/terms", requireAuth, async (req, res) => {
-  try {
-    res.json(await prisma.term.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } }));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
-});
-
 app.post("/api/terms", requireAuth, async (req, res) => {
   const { name, startDate, endDate } = req.body;
-  if (!name || !startDate || !endDate) return res.status(400).json({ message: "All fields required" });
+  if (!name || !startDate || !endDate)
+    return res.status(400).json({ message: "name, startDate and endDate required" });
   try {
-    await prisma.term.updateMany({ where: { userId: req.userId, status: "active" }, data: { status: "closed" } });
+    // close any existing active term
+    await prisma.term.updateMany({
+      where: { userId: req.userId, status: "active" },
+      data: { status: "closed" },
+    });
     const term = await prisma.term.create({
-      data: { name, startDate: new Date(startDate), endDate: new Date(endDate), status: "active", userId: req.userId },
+      data: {
+        name,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        status: "active",
+        userId: req.userId,
+      },
     });
     res.status(201).json(term);
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) {
+    console.error("create term:", e);
+    res.status(500).json({ message: "Something went wrong" });
+  }
 });
 
+app.get("/api/terms", requireAuth, async (req, res) => {
+  try {
+    const terms = await prisma.term.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(terms);
+  } catch {
+    res.status(500).json({ message: "Something went wrong" });
+  }
+});
 // ─── Students ─────────────────────────────────────────────────────────────────
 app.get("/api/students", requireAuth, async (req, res) => {
   try {
@@ -201,7 +220,6 @@ app.get("/api/students", requireAuth, async (req, res) => {
   } catch { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// FIX: moved /unpaid ABOVE /:id so Express doesn't swallow it as a param
 app.get("/api/students/unpaid", requireAuth, async (req, res) => {
   try {
     const students = await prisma.student.findMany({ where: { userId: req.userId } });
@@ -222,7 +240,7 @@ app.get("/api/students/unpaid", requireAuth, async (req, res) => {
 });
 
 app.post("/api/students", requireAuth, async (req, res) => {
-  const { name, adm, cls, fee } = req.body;
+  const { name, adm, cls, fee, paid } = req.body;
   if (!name || !adm) return res.status(400).json({ message: "Name and admission number required" });
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
@@ -231,9 +249,34 @@ app.post("/api/students", requireAuth, async (req, res) => {
     if (count >= limit)
       return res.status(403).json({ message: `Student limit reached for your plan (${limit}). Upgrade to add more.`, upgradeRequired: true });
 
+    const parsedFee  = parseFloat(fee)  || 0;
+    const parsedPaid = parseFloat(paid) || 0;
+
     const student = await prisma.student.create({
-      data: { name, adm, cls: cls || "", fee: parseFloat(fee) || 0, paid: 0, userId: req.userId },
+      data: {
+        name,
+        adm,
+        cls: cls || "",
+        fee: parsedFee,
+        paid: parsedPaid,
+        userId: req.userId,
+      },
     });
+
+    // if they paid something upfront, create a payment record too
+    if (parsedPaid > 0) {
+      await prisma.payment.create({
+        data: {
+          amount: parsedPaid,
+          method: "manual",
+          txnRef: null,
+          feeBreakdown: [],
+          studentId: student.id,
+          userId: req.userId,
+        },
+      });
+    }
+
     res.status(201).json(student);
   } catch (e) {
     if (e.code === "P2002") return res.status(400).json({ message: "Admission number already exists" });
@@ -246,14 +289,15 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
   try {
     const s = await prisma.student.findFirst({ where: { id: req.params.id, userId: req.userId } });
     if (!s) return res.status(404).json({ message: "Not found" });
-    const { name, cls, phone, fee, termId } = req.body;
+    const { name, cls, phone, fee, paid, termId } = req.body;
     const updated = await prisma.student.update({
       where: { id: req.params.id },
       data: {
-        ...(name && { name }),
+        ...(name !== undefined && { name }),
         ...(cls !== undefined && { cls }),
         ...(phone !== undefined && { phone }),
         ...(fee !== undefined && { fee: parseFloat(fee) }),
+        ...(paid !== undefined && { paid: parseFloat(paid) }),
         ...(termId !== undefined && { termId }),
       },
     });
