@@ -489,12 +489,12 @@ export default function Dashboard() {
   useEffect(() => {
     Promise.all([
       axios.get(`${API}/api/terms`,          { headers: { Authorization: `Bearer ${token}` } }),
-      axios.get(`${API}/api/dashboard/stats`,{ headers: { Authorization: `Bearer ${token}` } }),
+      axios.get(`${API}/api/stats`, { headers: { Authorization: `Bearer ${token}` } }),
     ]).then(([termsRes, statsRes]) => {
       const terms = termsRes.data;
       setAllTerms(terms);
       setActiveTerm(terms.find(t => t.status === "active") || null);
-      setStats(statsRes.data?.summary || null);
+      setStats(statsRes.data || null);
       setRecentPayments(statsRes.data?.recentPayments || []);
       setTopUnpaid(statsRes.data?.topUnpaid || []);
     }).catch(console.error)
