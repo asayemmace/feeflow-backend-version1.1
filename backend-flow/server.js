@@ -85,12 +85,7 @@ app.post("/api/auth/register", async (req, res) => {
     if (await prisma.user.findUnique({ where: { email } }))
       return res.status(400).json({ message: "Email already registered" });
     const user = await prisma.user.create({
-      data: {
-        name, email,
-        password: await bcrypt.hash(password, 10),
-        schoolName,
-        plan: "free",
-      },
+      data: { name, email, password: await bcrypt.hash(password, 10), schoolName, plan: "free" },
     });
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" });
     res.status(201).json({ token, user: pick(user) });
@@ -174,12 +169,10 @@ app.post("/api/terms", requireAuth, async (req, res) => {
   if (!name || !startDate || !endDate)
     return res.status(400).json({ message: "name, startDate and endDate required" });
   try {
-    // close any existing active term
     await prisma.term.updateMany({
       where: { userId: req.userId, status: "active" },
       data: { status: "closed" },
     });
-    // reset all students' paid amount to 0 for the new term
     await prisma.student.updateMany({
       where: { userId: req.userId },
       data: { paid: 0, daysOverdue: 0 },
@@ -232,14 +225,98 @@ app.get("/api/students/unpaid", requireAuth, async (req, res) => {
         .sort((a, b) => (b.fee - b.paid) - (a.fee - a.paid))
         .slice(0, 5)
         .map((s, i) => ({
-          rank: i + 1,
-          name: s.name,
-          cls: s.cls,
+          rank: i + 1, name: s.name, cls: s.cls,
           bal: `KES ${(s.fee - s.paid).toLocaleString()}`,
           days: s.daysOverdue > 0 ? `${s.daysOverdue} days overdue` : "Pending",
         }))
     );
   } catch { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+// ─── Student payment history (for profile modal) ──────────────────────────────
+app.get("/api/students/:id/payments", requireAuth, async (req, res) => {
+  try {
+    const student = await prisma.student.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    // All payments for this student, newest first
+    const payments = await prisma.payment.findMany({
+      where: { studentId: req.params.id },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // All terms for this user to map termId → term name/dates
+    const terms = await prisma.term.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Group payments by term. Payments without a termId go into the active term.
+    // Since we reset paid=0 on each new term, we can approximate which term a
+    // payment belongs to by its createdAt vs term date ranges.
+    const termMap = {};
+    terms.forEach(t => { termMap[t.id] = t; });
+
+    // Build term summaries: for each term, total paid by this student
+    // We determine which term a payment belongs to by its createdAt date
+    const termSummaries = terms.map(term => {
+      const termPayments = payments.filter(p => {
+        const created = new Date(p.createdAt);
+        const start   = new Date(term.startDate);
+        // end is either the next term's start or now for active terms
+        const end     = term.status === "active" ? new Date() : new Date(term.endDate);
+        return created >= start && created <= end;
+      });
+      const totalPaid = termPayments.reduce((s, p) => s + p.amount, 0);
+      return {
+        termId:    term.id,
+        termName:  term.name,
+        status:    term.status,
+        startDate: term.startDate,
+        endDate:   term.endDate,
+        fee:       student.fee,        // current fee (best we have without per-term fee history)
+        paid:      totalPaid,
+        cleared:   totalPaid >= student.fee,
+        payments:  termPayments.map(p => ({
+          id:          p.id,
+          amount:      p.amount,
+          method:      p.method || "manual",
+          txnRef:      p.txnRef || null,
+          feeBreakdown: p.feeBreakdown || [],
+          createdAt:   p.createdAt,
+          time: new Date(p.createdAt).toLocaleString("en-KE", {
+            day: "numeric", month: "short", year: "numeric",
+            hour: "2-digit", minute: "2-digit",
+          }),
+        })),
+      };
+    }).filter(t => t.payments.length > 0 || t.status === "active");
+
+    // Current term balance carried forward indicator
+    // If a past term has cleared=false that's an outstanding balance from a prior term
+    const hasUnpaidPastTerm = termSummaries.some(t => t.status === "closed" && !t.cleared && t.paid < t.fee);
+
+    res.json({
+      student: {
+        id:         student.id,
+        name:       student.name,
+        adm:        student.adm,
+        cls:        student.cls,
+        phone:      student.phone,
+        fee:        student.fee,
+        paid:       student.paid,
+        daysOverdue: student.daysOverdue,
+      },
+      termSummaries,
+      hasUnpaidPastTerm,
+      allTermsCleared: termSummaries.length > 0 && termSummaries.every(t => t.cleared),
+    });
+  } catch (e) {
+    console.error("student payments:", e);
+    res.status(500).json({ message: "Something went wrong" });
+  }
 });
 
 app.post("/api/students", requireAuth, async (req, res) => {
@@ -255,7 +332,6 @@ app.post("/api/students", requireAuth, async (req, res) => {
     const parsedFee  = parseFloat(fee)  || 0;
     const parsedPaid = parseFloat(paid) || 0;
 
-    // compute daysOverdue: days since term start if not paid
     const activeTerm = await prisma.term.findFirst({
       where: { userId: req.userId, status: "active" },
       orderBy: { createdAt: "desc" },
@@ -266,26 +342,19 @@ app.post("/api/students", requireAuth, async (req, res) => {
 
     const student = await prisma.student.create({
       data: {
-        name, adm,
-        cls: cls || "",
-        fee: parsedFee,
-        paid: parsedPaid,
-        phone: phone || null,
-        daysOverdue,
+        name, adm, cls: cls || "",
+        fee: parsedFee, paid: parsedPaid,
+        phone: phone || null, daysOverdue,
         userId: req.userId,
       },
     });
 
-    // if they paid something upfront, create a payment record too
     if (parsedPaid > 0) {
       await prisma.payment.create({
         data: {
-          amount: parsedPaid,
-          method: "manual",
-          txnRef: null,
+          amount: parsedPaid, method: "manual", txnRef: null,
           feeBreakdown: feeBreakdown || [],
-          studentId: student.id,
-          userId: req.userId,
+          studentId: student.id, userId: req.userId,
         },
       });
     }
@@ -304,7 +373,6 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
     if (!s) return res.status(404).json({ message: "Not found" });
     const { name, cls, phone, fee, paid, termId } = req.body;
 
-    // recompute daysOverdue whenever paid/fee changes
     const newFee  = fee  !== undefined ? parseFloat(fee)  : s.fee;
     const newPaid = paid !== undefined ? parseFloat(paid) : s.paid;
     let daysOverdue = s.daysOverdue;
@@ -366,7 +434,6 @@ app.get("/api/stats", requireAuth, async (req, res) => {
     });
     const collectedToday = todayPayments.reduce((s, p) => s + p.amount, 0);
 
-    // ── Recent payments (last 10) ──────────────────────────────────────────────
     const recentRaw = await prisma.payment.findMany({
       where: { userId: req.userId },
       orderBy: { createdAt: "desc" },
@@ -381,20 +448,15 @@ app.get("/api/stats", requireAuth, async (req, res) => {
       txn: p.txnRef || "—",
       method: p.method || "manual",
       amount: `KES ${Number(p.amount).toLocaleString()}`,
-      time: new Date(p.createdAt).toLocaleString("en-KE", {
-        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-      }),
+      time: new Date(p.createdAt).toLocaleString("en-KE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
     }));
 
-    // ── Top unpaid (highest balance, top 5) ───────────────────────────────────
     const topUnpaid = students
       .filter((s) => s.paid < s.fee)
       .sort((a, b) => (b.fee - b.paid) - (a.fee - a.paid))
       .slice(0, 5)
       .map((s, i) => ({
-        rank: i + 1,
-        name: s.name,
-        cls: s.cls,
+        rank: i + 1, name: s.name, cls: s.cls,
         bal: `KES ${(s.fee - s.paid).toLocaleString()}`,
         days: s.daysOverdue > 0 ? `${s.daysOverdue}d overdue` : "Pending",
       }));
@@ -408,60 +470,46 @@ app.get("/api/stats", requireAuth, async (req, res) => {
       totalCollected, totalArrears, collectedToday,
       paymentsToday: todayPayments.length,
       totalStudents: students.length, fullyPaid, partial, unpaid,
-      recentPayments,
-      topUnpaid,
+      recentPayments, topUnpaid,
       items: [
         {
           label: "Total Collected",
           value: `KES ${Number(totalCollected).toLocaleString()}`,
           sub: `KES ${Number(totalFee).toLocaleString()} expected · term target`,
-          progress: collectedPct,
-          badge: `${collectedPct}% collected`,
+          progress: collectedPct, badge: `${collectedPct}% collected`,
           badgeBg: "var(--green-bg)", badgeColor: "var(--green)",
-          iconBg: "var(--green-bg)", iconBorder: "var(--green-border)",
-          iconColor: "var(--green)",
+          iconBg: "var(--green-bg)", iconBorder: "var(--green-border)", iconColor: "var(--green)",
           iconPath: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-          valueColor: null,
-          progressClass: "",
+          valueColor: null, progressClass: "",
         },
         {
           label: "Outstanding Arrears",
           value: `KES ${Number(totalArrears).toLocaleString()}`,
           sub: `${unpaid + partial} students with balances`,
-          progress: arrearsPct,
-          badge: `${unpaid + partial} students`,
+          progress: arrearsPct, badge: `${unpaid + partial} students`,
           badgeBg: "var(--red-bg)", badgeColor: "var(--red)",
-          iconBg: "var(--red-bg)", iconBorder: "var(--red-border)",
-          iconColor: "var(--red)",
+          iconBg: "var(--red-bg)", iconBorder: "var(--red-border)", iconColor: "var(--red)",
           iconPath: "M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
-          valueColor: "var(--red)",
-          progressClass: "bad",
+          valueColor: "var(--red)", progressClass: "bad",
         },
         {
           label: "Fully Paid",
           value: fullyPaid,
           sub: `Out of ${students.length} students (${paidPct}%)`,
-          progress: paidPct,
-          badge: null,
-          badgeBg: null, badgeColor: null,
-          iconBg: "var(--green-bg)", iconBorder: "var(--green-border)",
-          iconColor: "var(--green)",
+          progress: paidPct, badge: null, badgeBg: null, badgeColor: null,
+          iconBg: "var(--green-bg)", iconBorder: "var(--green-border)", iconColor: "var(--green)",
           iconPath: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
-          valueColor: null,
-          progressClass: "",
+          valueColor: null, progressClass: "",
         },
         {
           label: "Unpaid / Partial",
           value: unpaid + partial,
           sub: `${partial} partial · ${unpaid} not started`,
-          progress: problemPct,
-          badge: `${unpaid + partial} students`,
+          progress: problemPct, badge: `${unpaid + partial} students`,
           badgeBg: "var(--red-bg)", badgeColor: "var(--red)",
-          iconBg: "var(--red-bg)", iconBorder: "var(--red-border)",
-          iconColor: "var(--red)",
+          iconBg: "var(--red-bg)", iconBorder: "var(--red-border)", iconColor: "var(--red)",
           iconPath: "M10 9H6M10 13H6m10 4H6M20 6H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2z",
-          valueColor: "var(--red)",
-          progressClass: "warn",
+          valueColor: "var(--red)", progressClass: "warn",
         },
       ],
     });
@@ -535,7 +583,6 @@ app.post("/api/payments", requireAuth, async (req, res) => {
     });
 
     const newPaid = student.paid + parseFloat(amount);
-    // update paid and recompute daysOverdue
     const daysOverdue = newPaid >= student.fee ? 0 : student.daysOverdue;
     await prisma.student.update({
       where: { id: studentId },
@@ -567,8 +614,6 @@ app.delete("/api/payments/:id", requireAuth, async (req, res) => {
       where: { id: req.params.id, userId: req.userId },
     });
     if (!payment) return res.status(404).json({ message: "Payment not found" });
-
-    // decrement student paid amount
     await prisma.student.update({
       where: { id: payment.studentId },
       data: { paid: { decrement: payment.amount } },
@@ -587,12 +632,13 @@ app.get("/api/payments/unmatched", requireAuth, async (req, res) => {
     res.json(list.map((p) => ({
       id: p.id, phone: p.phone, txn: p.txnRef || "—",
       amount: `KES ${Number(p.amount).toLocaleString()}`,
+      rawAmount: p.amount,
       time: new Date(p.createdAt).toLocaleString("en-KE"),
     })));
   } catch { res.status(500).json({ message: "Something went wrong" }); }
 });
 
-// ─── Assign unmatched payment to a student ────────────────────────────────────
+// ─── Assign unmatched payment ─────────────────────────────────────────────────
 app.post("/api/payments/unmatched/:id/assign", requireAuth, async (req, res) => {
   const { studentId } = req.body;
   if (!studentId) return res.status(400).json({ message: "studentId required" });
@@ -604,15 +650,11 @@ app.post("/api/payments/unmatched/:id/assign", requireAuth, async (req, res) => 
     const student = await prisma.student.findFirst({ where: { id: studentId, userId: req.userId } });
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    // create a proper payment record
     await prisma.payment.create({
       data: {
-        amount: unmatched.amount,
-        txnRef: unmatched.txnRef,
-        method: "mpesa",
-        feeBreakdown: [],
-        studentId,
-        userId: req.userId,
+        amount: unmatched.amount, txnRef: unmatched.txnRef,
+        method: "mpesa", feeBreakdown: [],
+        studentId, userId: req.userId,
       },
     });
     await prisma.student.update({
@@ -647,10 +689,8 @@ app.post("/api/payments/stk", requireAuth, requirePlan("mpesa"), async (req, res
       headers: { Authorization: `Basic ${auth}` },
     });
     const { access_token } = await tokenRes.json();
-
     const ts = new Date().toISOString().replace(/[-T:.Z]/g, "").slice(0, 14);
     const pw = Buffer.from(`${SC}${PK}${ts}`).toString("base64");
-
     const stkRes = await fetch("https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest", {
       method: "POST",
       headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
@@ -683,21 +723,16 @@ app.post("/api/mpesa/callback", async (req, res) => {
       const ref       = get("MpesaReceiptNumber");
       const phone     = get("PhoneNumber")?.toString();
       const studentId = (cb.AccountReference || "").replace("FF-", "");
-
-      const student = await prisma.student.findUnique({ where: { id: studentId } });
+      const student   = await prisma.student.findUnique({ where: { id: studentId } });
       if (student) {
         await prisma.payment.create({
           data: { amount: parseFloat(amount), txnRef: ref, method: "mpesa", feeBreakdown: [], studentId, userId: student.userId },
         });
         const newPaid = student.paid + parseFloat(amount);
         const daysOverdue = newPaid >= student.fee ? 0 : student.daysOverdue;
-        await prisma.student.update({
-          where: { id: studentId },
-          data: { paid: { increment: parseFloat(amount) }, daysOverdue },
-        });
+        await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: parseFloat(amount) }, daysOverdue } });
       } else {
-        // store as unmatched so admin can assign it later
-        const user = await prisma.user.findFirst(); // fallback — improve if multi-tenant
+        const user = await prisma.user.findFirst();
         if (user) {
           await prisma.unmatchedPayment.create({
             data: { phone, txnRef: ref, amount: parseFloat(amount), userId: user.id },
@@ -705,25 +740,16 @@ app.post("/api/mpesa/callback", async (req, res) => {
         }
       }
     }
-  } catch (e) {
-    console.error("mpesa callback:", e);
-  }
+  } catch (e) { console.error("mpesa callback:", e); }
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 });
 
 // ─── Health ────────────────────────────────────────────────────────────────────
-app.get("/health", (_, res) => res.json({ ok: true, version: "2.1", env: process.env.NODE_ENV }));
+app.get("/health", (_, res) => res.json({ ok: true, version: "2.2", env: process.env.NODE_ENV }));
 
-// ─── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ message: "Route not found" }));
+app.use((err, req, res, next) => { console.error(err); res.status(500).json({ message: "Internal server error" }); });
 
-// ─── Global error handler ─────────────────────────────────────────────────────
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ message: "Internal server error" });
-});
-
-// ─── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`FeeFlow API → http://0.0.0.0:${PORT}  [${process.env.NODE_ENV || "development"}]`);

@@ -61,3 +61,17 @@
 - Keep your JWT_SECRET secure - generate a strong random string
 - The `render.yaml` file handles the build and start commands automatically
 - Both platforms offer free tiers, though they have limitations (Render free tier sleeps after 15 min of inactivity)
+
+//push to github
+# 1. Stage all changes (from both frontend and backend)
+git add .
+
+# 2. Label your update
+git commit -m "Update: [Describe what you changed here]"
+
+# 3. Send to GitHub
+git push origin main
+or
+git push origin main --force
+or
+ship
