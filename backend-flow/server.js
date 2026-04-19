@@ -77,7 +77,6 @@ function pick(u) {
 }
 
 // ─── Register ─────────────────────────────────────────────────────────────────
-// Automatically assigns "free" plan to all new users.
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password, schoolName } = req.body;
   if (!name || !email || !password)
@@ -87,11 +86,10 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ message: "Email already registered" });
     const user = await prisma.user.create({
       data: {
-        name,
-        email,
+        name, email,
         password: await bcrypt.hash(password, 10),
         schoolName,
-        plan: "free", // always start on free — no override possible from client
+        plan: "free",
       },
     });
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" });
@@ -103,7 +101,6 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-// FIX: was a duplicate of /register — now correctly handles login.
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -182,6 +179,11 @@ app.post("/api/terms", requireAuth, async (req, res) => {
       where: { userId: req.userId, status: "active" },
       data: { status: "closed" },
     });
+    // reset all students' paid amount to 0 for the new term
+    await prisma.student.updateMany({
+      where: { userId: req.userId },
+      data: { paid: 0, daysOverdue: 0 },
+    });
     const term = await prisma.term.create({
       data: {
         name,
@@ -209,6 +211,7 @@ app.get("/api/terms", requireAuth, async (req, res) => {
     res.status(500).json({ message: "Something went wrong" });
   }
 });
+
 // ─── Students ─────────────────────────────────────────────────────────────────
 app.get("/api/students", requireAuth, async (req, res) => {
   try {
@@ -240,7 +243,7 @@ app.get("/api/students/unpaid", requireAuth, async (req, res) => {
 });
 
 app.post("/api/students", requireAuth, async (req, res) => {
-  const { name, adm, cls, fee, paid } = req.body;
+  const { name, adm, cls, fee, paid, phone, feeBreakdown } = req.body;
   if (!name || !adm) return res.status(400).json({ message: "Name and admission number required" });
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
@@ -252,13 +255,23 @@ app.post("/api/students", requireAuth, async (req, res) => {
     const parsedFee  = parseFloat(fee)  || 0;
     const parsedPaid = parseFloat(paid) || 0;
 
+    // compute daysOverdue: days since term start if not paid
+    const activeTerm = await prisma.term.findFirst({
+      where: { userId: req.userId, status: "active" },
+      orderBy: { createdAt: "desc" },
+    });
+    const daysOverdue = (parsedPaid < parsedFee && activeTerm)
+      ? Math.max(0, Math.floor((Date.now() - new Date(activeTerm.startDate).getTime()) / (1000 * 60 * 60 * 24)))
+      : 0;
+
     const student = await prisma.student.create({
       data: {
-        name,
-        adm,
+        name, adm,
         cls: cls || "",
         fee: parsedFee,
         paid: parsedPaid,
+        phone: phone || null,
+        daysOverdue,
         userId: req.userId,
       },
     });
@@ -270,7 +283,7 @@ app.post("/api/students", requireAuth, async (req, res) => {
           amount: parsedPaid,
           method: "manual",
           txnRef: null,
-          feeBreakdown: [],
+          feeBreakdown: feeBreakdown || [],
           studentId: student.id,
           userId: req.userId,
         },
@@ -290,15 +303,35 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
     const s = await prisma.student.findFirst({ where: { id: req.params.id, userId: req.userId } });
     if (!s) return res.status(404).json({ message: "Not found" });
     const { name, cls, phone, fee, paid, termId } = req.body;
+
+    // recompute daysOverdue whenever paid/fee changes
+    const newFee  = fee  !== undefined ? parseFloat(fee)  : s.fee;
+    const newPaid = paid !== undefined ? parseFloat(paid) : s.paid;
+    let daysOverdue = s.daysOverdue;
+    if (fee !== undefined || paid !== undefined) {
+      if (newPaid >= newFee) {
+        daysOverdue = 0;
+      } else {
+        const activeTerm = await prisma.term.findFirst({
+          where: { userId: req.userId, status: "active" },
+          orderBy: { createdAt: "desc" },
+        });
+        daysOverdue = activeTerm
+          ? Math.max(0, Math.floor((Date.now() - new Date(activeTerm.startDate).getTime()) / (1000 * 60 * 60 * 24)))
+          : 0;
+      }
+    }
+
     const updated = await prisma.student.update({
       where: { id: req.params.id },
       data: {
-        ...(name !== undefined && { name }),
-        ...(cls !== undefined && { cls }),
+        ...(name  !== undefined && { name }),
+        ...(cls   !== undefined && { cls }),
         ...(phone !== undefined && { phone }),
-        ...(fee !== undefined && { fee: parseFloat(fee) }),
-        ...(paid !== undefined && { paid: parseFloat(paid) }),
+        ...(fee   !== undefined && { fee: newFee }),
+        ...(paid  !== undefined && { paid: newPaid }),
         ...(termId !== undefined && { termId }),
+        daysOverdue,
       },
     });
     res.json(updated);
@@ -318,45 +351,117 @@ app.delete("/api/students/:id", requireAuth, async (req, res) => {
 // ─── Stats ────────────────────────────────────────────────────────────────────
 app.get("/api/stats", requireAuth, async (req, res) => {
   try {
-    const students      = await prisma.student.findMany({ where: { userId: req.userId } });
-    const totalFee      = students.reduce((s, st) => s + st.fee, 0);
+    const students       = await prisma.student.findMany({ where: { userId: req.userId } });
+    const totalFee       = students.reduce((s, st) => s + st.fee, 0);
     const totalCollected = students.reduce((s, st) => s + st.paid, 0);
-    const totalArrears  = totalFee - totalCollected;
-    const fullyPaid     = students.filter((s) => s.paid >= s.fee).length;
-    const partial       = students.filter((s) => s.paid > 0 && s.paid < s.fee).length;
-    const unpaid        = students.filter((s) => s.paid === 0).length;
-    const today         = new Date(); today.setHours(0, 0, 0, 0);
-    const todayPayments = await prisma.payment.findMany({ where: { userId: req.userId, createdAt: { gte: today } } });
+    const totalArrears   = Math.max(0, totalFee - totalCollected);
+    const fullyPaid      = students.filter((s) => s.fee > 0 && s.paid >= s.fee).length;
+    const partial        = students.filter((s) => s.paid > 0 && s.paid < s.fee).length;
+    const unpaid         = students.filter((s) => s.paid === 0).length;
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayPayments = await prisma.payment.findMany({
+      where: { userId: req.userId, createdAt: { gte: today } },
+      include: { student: true },
+    });
     const collectedToday = todayPayments.reduce((s, p) => s + p.amount, 0);
+
+    // ── Recent payments (last 10) ──────────────────────────────────────────────
+    const recentRaw = await prisma.payment.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      include: { student: true },
+    });
+    const recentPayments = recentRaw.map((p) => ({
+      id: p.id,
+      name: p.student?.name || "Unknown",
+      initials: (p.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      meta: `${p.student?.cls || ""} · ${p.student?.adm || ""}`,
+      txn: p.txnRef || "—",
+      method: p.method || "manual",
+      amount: `KES ${Number(p.amount).toLocaleString()}`,
+      time: new Date(p.createdAt).toLocaleString("en-KE", {
+        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+      }),
+    }));
+
+    // ── Top unpaid (highest balance, top 5) ───────────────────────────────────
+    const topUnpaid = students
+      .filter((s) => s.paid < s.fee)
+      .sort((a, b) => (b.fee - b.paid) - (a.fee - a.paid))
+      .slice(0, 5)
+      .map((s, i) => ({
+        rank: i + 1,
+        name: s.name,
+        cls: s.cls,
+        bal: `KES ${(s.fee - s.paid).toLocaleString()}`,
+        days: s.daysOverdue > 0 ? `${s.daysOverdue}d overdue` : "Pending",
+      }));
+
+    const collectedPct = totalFee > 0 ? Math.round((totalCollected / totalFee) * 100) : 0;
+    const arrearsPct   = totalFee > 0 ? Math.round((totalArrears   / totalFee) * 100) : 0;
+    const paidPct      = students.length > 0 ? Math.round((fullyPaid / students.length) * 100) : 0;
+    const problemPct   = students.length > 0 ? Math.round(((partial + unpaid) / students.length) * 100) : 0;
 
     res.json({
       totalCollected, totalArrears, collectedToday,
       paymentsToday: todayPayments.length,
       totalStudents: students.length, fullyPaid, partial, unpaid,
+      recentPayments,
+      topUnpaid,
       items: [
         {
           label: "Total Collected",
-          value: `KES ${totalCollected.toLocaleString()}`,
-          sub: `KES ${totalFee.toLocaleString()} expected`,
-          progress: totalFee > 0 ? Math.round((totalCollected / totalFee) * 100) : 0,
-          badge: `${totalFee > 0 ? Math.round((totalCollected / totalFee) * 100) : 0}% collected`,
-          badgeBg: "rgba(34,211,164,0.1)", badgeColor: "var(--green)",
-          iconBg: "rgba(34,211,164,0.08)", iconBorder: "rgba(34,211,164,0.15)",
+          value: `KES ${Number(totalCollected).toLocaleString()}`,
+          sub: `KES ${Number(totalFee).toLocaleString()} expected · term target`,
+          progress: collectedPct,
+          badge: `${collectedPct}% collected`,
+          badgeBg: "var(--green-bg)", badgeColor: "var(--green)",
+          iconBg: "var(--green-bg)", iconBorder: "var(--green-border)",
+          iconColor: "var(--green)",
+          iconPath: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+          valueColor: null,
+          progressClass: "",
         },
         {
           label: "Outstanding Arrears",
-          value: `KES ${totalArrears.toLocaleString()}`,
+          value: `KES ${Number(totalArrears).toLocaleString()}`,
           sub: `${unpaid + partial} students with balances`,
-          progress: totalFee > 0 ? Math.round((totalArrears / totalFee) * 100) : 0,
-          progressClass: "warn",
-          iconBg: "rgba(248,113,113,0.08)", iconBorder: "rgba(248,113,113,0.15)",
+          progress: arrearsPct,
+          badge: `${unpaid + partial} students`,
+          badgeBg: "var(--red-bg)", badgeColor: "var(--red)",
+          iconBg: "var(--red-bg)", iconBorder: "var(--red-border)",
+          iconColor: "var(--red)",
+          iconPath: "M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
+          valueColor: "var(--red)",
+          progressClass: "bad",
         },
         {
-          label: "Enrolled Students",
-          value: students.length,
-          sub: `${fullyPaid} fully paid · ${partial} partial`,
-          progress: students.length > 0 ? Math.round((fullyPaid / students.length) * 100) : 0,
-          iconBg: "rgba(59,130,246,0.08)", iconBorder: "rgba(59,130,246,0.15)",
+          label: "Fully Paid",
+          value: fullyPaid,
+          sub: `Out of ${students.length} students (${paidPct}%)`,
+          progress: paidPct,
+          badge: null,
+          badgeBg: null, badgeColor: null,
+          iconBg: "var(--green-bg)", iconBorder: "var(--green-border)",
+          iconColor: "var(--green)",
+          iconPath: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
+          valueColor: null,
+          progressClass: "",
+        },
+        {
+          label: "Unpaid / Partial",
+          value: unpaid + partial,
+          sub: `${partial} partial · ${unpaid} not started`,
+          progress: problemPct,
+          badge: `${unpaid + partial} students`,
+          badgeBg: "var(--red-bg)", badgeColor: "var(--red)",
+          iconBg: "var(--red-bg)", iconBorder: "var(--red-border)",
+          iconColor: "var(--red)",
+          iconPath: "M10 9H6M10 13H6m10 4H6M20 6H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2z",
+          valueColor: "var(--red)",
+          progressClass: "warn",
         },
       ],
     });
@@ -382,9 +487,31 @@ app.get("/api/payments/recent", requireAuth, async (req, res) => {
       initials: (p.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
       meta: `${p.student?.cls || ""} · ${p.student?.adm || ""}`,
       txn: p.txnRef || "—",
-      amount: `KES ${p.amount.toLocaleString()}`,
+      amount: `KES ${Number(p.amount).toLocaleString()}`,
       method: p.method,
       time: new Date(p.createdAt).toLocaleString("en-KE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+    })));
+  } catch { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+app.get("/api/payments", requireAuth, async (req, res) => {
+  try {
+    const payments = await prisma.payment.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+      include: { student: true },
+    });
+    res.json(payments.map((p) => ({
+      id: p.id,
+      name: p.student?.name || "Unknown",
+      initials: (p.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      meta: `${p.student?.cls || ""} · ${p.student?.adm || ""}`,
+      txn: p.txnRef || "—",
+      amount: `KES ${Number(p.amount).toLocaleString()}`,
+      method: p.method || "manual",
+      feeBreakdown: p.feeBreakdown || [],
+      time: new Date(p.createdAt).toLocaleString("en-KE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+      createdAt: p.createdAt,
     })));
   } catch { res.status(500).json({ message: "Something went wrong" }); }
 });
@@ -395,6 +522,7 @@ app.post("/api/payments", requireAuth, async (req, res) => {
   try {
     const student = await prisma.student.findFirst({ where: { id: studentId, userId: req.userId } });
     if (!student) return res.status(404).json({ message: "Student not found" });
+
     const payment = await prisma.payment.create({
       data: {
         amount: parseFloat(amount),
@@ -405,20 +533,50 @@ app.post("/api/payments", requireAuth, async (req, res) => {
       },
       include: { student: true },
     });
-    await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: parseFloat(amount) } } });
+
+    const newPaid = student.paid + parseFloat(amount);
+    // update paid and recompute daysOverdue
+    const daysOverdue = newPaid >= student.fee ? 0 : student.daysOverdue;
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { paid: { increment: parseFloat(amount) }, daysOverdue },
+    });
+
     res.status(201).json({
-      ...payment,
+      id: payment.id,
       name: payment.student?.name,
       initials: (payment.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
       meta: `${payment.student?.cls || ""} · ${payment.student?.adm || ""}`,
       txn: payment.txnRef || "—",
       method: payment.method,
       feeBreakdown: payment.feeBreakdown,
-      amount: `KES ${payment.amount.toLocaleString()}`,
+      amount: `KES ${Number(payment.amount).toLocaleString()}`,
       time: "Just now",
+      createdAt: payment.createdAt,
     });
   } catch (e) {
     console.error("create payment:", e);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+});
+
+// ─── Delete payment ───────────────────────────────────────────────────────────
+app.delete("/api/payments/:id", requireAuth, async (req, res) => {
+  try {
+    const payment = await prisma.payment.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
+    if (!payment) return res.status(404).json({ message: "Payment not found" });
+
+    // decrement student paid amount
+    await prisma.student.update({
+      where: { id: payment.studentId },
+      data: { paid: { decrement: payment.amount } },
+    });
+    await prisma.payment.delete({ where: { id: req.params.id } });
+    res.json({ message: "Deleted" });
+  } catch (e) {
+    console.error("delete payment:", e);
     res.status(500).json({ message: "Something went wrong" });
   }
 });
@@ -428,10 +586,45 @@ app.get("/api/payments/unmatched", requireAuth, async (req, res) => {
     const list = await prisma.unmatchedPayment.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } });
     res.json(list.map((p) => ({
       id: p.id, phone: p.phone, txn: p.txnRef || "—",
-      amount: `KES ${p.amount.toLocaleString()}`,
+      amount: `KES ${Number(p.amount).toLocaleString()}`,
       time: new Date(p.createdAt).toLocaleString("en-KE"),
     })));
   } catch { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+// ─── Assign unmatched payment to a student ────────────────────────────────────
+app.post("/api/payments/unmatched/:id/assign", requireAuth, async (req, res) => {
+  const { studentId } = req.body;
+  if (!studentId) return res.status(400).json({ message: "studentId required" });
+  try {
+    const unmatched = await prisma.unmatchedPayment.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
+    if (!unmatched) return res.status(404).json({ message: "Unmatched payment not found" });
+    const student = await prisma.student.findFirst({ where: { id: studentId, userId: req.userId } });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    // create a proper payment record
+    await prisma.payment.create({
+      data: {
+        amount: unmatched.amount,
+        txnRef: unmatched.txnRef,
+        method: "mpesa",
+        feeBreakdown: [],
+        studentId,
+        userId: req.userId,
+      },
+    });
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { paid: { increment: unmatched.amount } },
+    });
+    await prisma.unmatchedPayment.delete({ where: { id: req.params.id } });
+    res.json({ message: "Assigned successfully" });
+  } catch (e) {
+    console.error("assign unmatched:", e);
+    res.status(500).json({ message: "Something went wrong" });
+  }
 });
 
 // ─── STK Push (Pro/Max only) ──────────────────────────────────────────────────
@@ -494,9 +687,22 @@ app.post("/api/mpesa/callback", async (req, res) => {
       const student = await prisma.student.findUnique({ where: { id: studentId } });
       if (student) {
         await prisma.payment.create({
-          data: { amount: parseFloat(amount), txnRef: ref, method: "mpesa", studentId, userId: student.userId },
+          data: { amount: parseFloat(amount), txnRef: ref, method: "mpesa", feeBreakdown: [], studentId, userId: student.userId },
         });
-        await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: parseFloat(amount) } } });
+        const newPaid = student.paid + parseFloat(amount);
+        const daysOverdue = newPaid >= student.fee ? 0 : student.daysOverdue;
+        await prisma.student.update({
+          where: { id: studentId },
+          data: { paid: { increment: parseFloat(amount) }, daysOverdue },
+        });
+      } else {
+        // store as unmatched so admin can assign it later
+        const user = await prisma.user.findFirst(); // fallback — improve if multi-tenant
+        if (user) {
+          await prisma.unmatchedPayment.create({
+            data: { phone, txnRef: ref, amount: parseFloat(amount), userId: user.id },
+          });
+        }
       }
     }
   } catch (e) {
@@ -506,7 +712,7 @@ app.post("/api/mpesa/callback", async (req, res) => {
 });
 
 // ─── Health ────────────────────────────────────────────────────────────────────
-app.get("/health", (_, res) => res.json({ ok: true, version: "2.0", env: process.env.NODE_ENV }));
+app.get("/health", (_, res) => res.json({ ok: true, version: "2.1", env: process.env.NODE_ENV }));
 
 // ─── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ message: "Route not found" }));
