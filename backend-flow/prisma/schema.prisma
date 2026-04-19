@@ -47,6 +47,7 @@ model Payment {
   method    String   @default("manual")
   termId    String?
   studentId String
+  feeBreakdown  Json?   @default("[]") 
   student   Student  @relation(fields: [studentId], references: [id])
   userId    String
   user      User     @relation(fields: [userId], references: [id])

@@ -346,7 +346,7 @@ app.get("/api/payments/recent", requireAuth, async (req, res) => {
 });
 
 app.post("/api/payments", requireAuth, async (req, res) => {
-  const { studentId, amount, txnRef } = req.body;
+  const { studentId, amount, txnRef, method, feeBreakdown } = req.body;
   if (!studentId || !amount) return res.status(400).json({ message: "studentId and amount required" });
   try {
     const student = await prisma.student.findFirst({ where: { id: studentId, userId: req.userId } });
@@ -355,6 +355,8 @@ app.post("/api/payments", requireAuth, async (req, res) => {
       data: {
         amount: parseFloat(amount),
         txnRef: txnRef || null,
+        method: method || "cash",
+        feeBreakdown: feeBreakdown || [],
         studentId, userId: req.userId,
       },
       include: { student: true },
@@ -366,6 +368,8 @@ app.post("/api/payments", requireAuth, async (req, res) => {
       initials: (payment.student?.name || "??").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
       meta: `${payment.student?.cls || ""} · ${payment.student?.adm || ""}`,
       txn: payment.txnRef || "—",
+      method: payment.method,
+      feeBreakdown: payment.feeBreakdown,
       amount: `KES ${payment.amount.toLocaleString()}`,
       time: "Just now",
     });
