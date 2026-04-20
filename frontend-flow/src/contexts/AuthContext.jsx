@@ -12,13 +12,11 @@ export const AuthProvider = ({ children }) => {
   });
   const [theme, setTheme] = useState(() => localStorage.getItem('ff_theme') || 'dark');
 
-  // Keep axios Authorization header in sync with token
   useEffect(() => {
     if (token) axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     else delete axios.defaults.headers.common['Authorization'];
   }, [token]);
 
-  // Apply theme to <html> element
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('ff_theme', theme);
@@ -44,6 +42,7 @@ export const AuthProvider = ({ children }) => {
     return res.data;
   };
 
+  // logout clears session — navigation to '/' is handled by the caller
   const logout = () => {
     localStorage.removeItem('ff_token');
     localStorage.removeItem('ff_user');
@@ -60,7 +59,6 @@ export const AuthProvider = ({ children }) => {
 
   const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
 
-  // Plan helpers
   const plan = user?.plan || 'free';
 
   const PLAN_LIMITS = {

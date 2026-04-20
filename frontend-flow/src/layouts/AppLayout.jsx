@@ -15,19 +15,38 @@ const PLAN_META = {
 // ─── User Settings Modal ───────────────────────────────────────────────────────
 function UserSettingsModal({ onClose }) {
   const { user, plan, updateUser, logout, theme, toggleTheme } = useAuth();
-  const navigate = useNavigate();
+  const navigate   = useNavigate();
   const resetStore = useAppStore(s => s.reset);
-  const [tab, setTab]         = useState('profile');
-  const [saving, setSaving]   = useState(false);
-  const [success, setSuccess] = useState('');
-  const [error, setError]     = useState('');
 
-  const [profile,   setProfile]   = useState({ name: user?.name || '', phone: user?.phone || '', schoolName: user?.schoolName || '' });
-  const [emailForm, setEmailForm] = useState({ email: user?.email || '', password: '' });
-  const [pwForm,    setPwForm]    = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [tab,     setTab]     = useState('profile');
+  const [saving,  setSaving]  = useState(false);
+  const [success, setSuccess] = useState('');
+  const [error,   setError]   = useState('');
+
+  // Profile tab — pre-filled with current values (name, phone, schoolName are safe to pre-fill)
+  const [profile, setProfile] = useState({
+    name:       user?.name       || '',
+    phone:      user?.phone      || '',
+    schoolName: user?.schoolName || '',
+  });
+
+  // Email tab — only current email shown as info; new email box starts EMPTY
+  const [emailForm, setEmailForm] = useState({ email: '', password: '' });
+
+  // Password tab — all three boxes always start EMPTY
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
 
   const showSuccess = msg => { setSuccess(msg); setError(''); setTimeout(() => setSuccess(''), 3000); };
   const showError   = msg => { setError(msg); setSuccess(''); };
+
+  // Reset form state when switching tabs so errors and partial input don't bleed
+  const switchTab = (id) => {
+    setTab(id);
+    setSuccess('');
+    setError('');
+    if (id === 'email')    setEmailForm({ email: '', password: '' });
+    if (id === 'password') setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
+  };
 
   const saveProfile = async () => {
     setSaving(true);
@@ -40,23 +59,29 @@ function UserSettingsModal({ onClose }) {
   };
 
   const saveEmail = async () => {
-    if (!emailForm.email || !emailForm.password) return showError('Fill all fields');
+    if (!emailForm.email.trim()) return showError('Enter your new email address');
+    if (!emailForm.password)     return showError('Enter your current password to confirm');
     setSaving(true);
     try {
       const res = await axios.patch(`${API}/api/auth/email`, emailForm);
       updateUser(res.data);
-      showSuccess('Email updated. Please log in again.');
-      setTimeout(() => { logout(); resetStore(); navigate('/login'); }, 2000);
+      showSuccess('Email updated. Signing you out…');
+      setTimeout(() => { logout(); resetStore(); navigate('/'); }, 2000);
     } catch (e) { showError(e.response?.data?.message || 'Failed to update'); }
     finally { setSaving(false); }
   };
 
   const savePassword = async () => {
-    if (pwForm.newPassword !== pwForm.confirm) return showError('Passwords do not match');
-    if (pwForm.newPassword.length < 6) return showError('Minimum 6 characters');
+    if (!pwForm.currentPassword)                   return showError('Enter your current password');
+    if (!pwForm.newPassword)                        return showError('Enter a new password');
+    if (pwForm.newPassword.length < 6)              return showError('Minimum 6 characters');
+    if (pwForm.newPassword !== pwForm.confirm)      return showError('Passwords do not match');
     setSaving(true);
     try {
-      await axios.patch(`${API}/api/auth/password`, { currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword });
+      await axios.patch(`${API}/api/auth/password`, {
+        currentPassword: pwForm.currentPassword,
+        newPassword:     pwForm.newPassword,
+      });
       showSuccess('Password changed successfully');
       setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
     } catch (e) { showError(e.response?.data?.message || 'Failed to update'); }
@@ -66,12 +91,13 @@ function UserSettingsModal({ onClose }) {
   const pm  = PLAN_META[plan] || PLAN_META.free;
   const inp = 'settings-input';
   const lbl = 'settings-label';
+
   const tabs = [
-    { id: 'profile',  label: 'Profile' },
-    { id: 'email',    label: 'Email' },
+    { id: 'profile',  label: 'Profile'  },
+    { id: 'email',    label: 'Email'    },
     { id: 'password', label: 'Password' },
-    { id: 'plan',     label: 'Plan' },
-    { id: 'display',  label: 'Display' },
+    { id: 'plan',     label: 'Plan'     },
+    { id: 'display',  label: 'Display'  },
   ];
 
   return (
@@ -90,7 +116,7 @@ function UserSettingsModal({ onClose }) {
           <div className="settings-tabs">
             {tabs.map(t => (
               <button key={t.id} className={`settings-tab${tab === t.id ? ' active' : ''}`}
-                onClick={() => { setTab(t.id); setSuccess(''); setError(''); }}>
+                onClick={() => switchTab(t.id)}>
                 {t.label}
               </button>
             ))}
@@ -99,19 +125,26 @@ function UserSettingsModal({ onClose }) {
           {success && <div className="settings-success">✓ {success}</div>}
           {error   && <div className="settings-error">✕ {error}</div>}
 
+          {/* ── Profile — pre-filled, safe to edit ── */}
           {tab === 'profile' && (
             <div className="settings-fields">
               <div className="field-group">
                 <label className={lbl}>Full name</label>
-                <input className={inp} value={profile.name} onChange={e => setProfile(p => ({ ...p, name: e.target.value }))} placeholder="Your name" />
+                <input className={inp} value={profile.name}
+                  onChange={e => setProfile(p => ({ ...p, name: e.target.value }))}
+                  placeholder="Your name" />
               </div>
               <div className="field-group">
                 <label className={lbl}>Phone number</label>
-                <input className={inp} type="tel" value={profile.phone} onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} placeholder="07XX XXX XXX" />
+                <input className={inp} type="tel" value={profile.phone}
+                  onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))}
+                  placeholder="07XX XXX XXX" />
               </div>
               <div className="field-group">
                 <label className={lbl}>School / Institution name</label>
-                <input className={inp} value={profile.schoolName} onChange={e => setProfile(p => ({ ...p, schoolName: e.target.value }))} placeholder="Sunrise High School" />
+                <input className={inp} value={profile.schoolName}
+                  onChange={e => setProfile(p => ({ ...p, schoolName: e.target.value }))}
+                  placeholder="Sunrise High School" />
               </div>
               <button className="settings-save-btn" onClick={saveProfile} disabled={saving}>
                 {saving ? 'Saving…' : 'Save changes'}
@@ -119,16 +152,25 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
+          {/* ── Email — new address box always starts empty ── */}
           {tab === 'email' && (
             <div className="settings-fields">
-              <div className="settings-info-box">Current email: <strong>{user?.email}</strong></div>
+              <div className="settings-info-box">
+                Current email: <strong>{user?.email}</strong>
+              </div>
               <div className="field-group">
                 <label className={lbl}>New email address</label>
-                <input className={inp} type="email" value={emailForm.email} onChange={e => setEmailForm(f => ({ ...f, email: e.target.value }))} placeholder="new@email.com" />
+                <input className={inp} type="email" value={emailForm.email}
+                  onChange={e => setEmailForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="new@email.com"
+                  autoComplete="off" />
               </div>
               <div className="field-group">
                 <label className={lbl}>Current password (to confirm)</label>
-                <input className={inp} type="password" value={emailForm.password} onChange={e => setEmailForm(f => ({ ...f, password: e.target.value }))} placeholder="••••••••" />
+                <input className={inp} type="password" value={emailForm.password}
+                  onChange={e => setEmailForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="••••••••"
+                  autoComplete="current-password" />
               </div>
               <button className="settings-save-btn" onClick={saveEmail} disabled={saving}>
                 {saving ? 'Updating…' : 'Update email'}
@@ -136,19 +178,29 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
+          {/* ── Password — all boxes always empty ── */}
           {tab === 'password' && (
             <div className="settings-fields">
               <div className="field-group">
                 <label className={lbl}>Current password</label>
-                <input className={inp} type="password" value={pwForm.currentPassword} onChange={e => setPwForm(f => ({ ...f, currentPassword: e.target.value }))} placeholder="••••••••" />
+                <input className={inp} type="password" value={pwForm.currentPassword}
+                  onChange={e => setPwForm(f => ({ ...f, currentPassword: e.target.value }))}
+                  placeholder="••••••••"
+                  autoComplete="current-password" />
               </div>
               <div className="field-group">
                 <label className={lbl}>New password</label>
-                <input className={inp} type="password" value={pwForm.newPassword} onChange={e => setPwForm(f => ({ ...f, newPassword: e.target.value }))} placeholder="Min. 6 characters" />
+                <input className={inp} type="password" value={pwForm.newPassword}
+                  onChange={e => setPwForm(f => ({ ...f, newPassword: e.target.value }))}
+                  placeholder="Min. 6 characters"
+                  autoComplete="new-password" />
               </div>
               <div className="field-group">
                 <label className={lbl}>Confirm new password</label>
-                <input className={inp} type="password" value={pwForm.confirm} onChange={e => setPwForm(f => ({ ...f, confirm: e.target.value }))} placeholder="Repeat new password" />
+                <input className={inp} type="password" value={pwForm.confirm}
+                  onChange={e => setPwForm(f => ({ ...f, confirm: e.target.value }))}
+                  placeholder="Repeat new password"
+                  autoComplete="new-password" />
               </div>
               <button className="settings-save-btn" onClick={savePassword} disabled={saving}>
                 {saving ? 'Changing…' : 'Change password'}
@@ -156,10 +208,11 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
+          {/* ── Plan ── */}
           {tab === 'plan' && (
             <div className="settings-fields">
               <div className="plan-current">
-                <div className="plan-current-name" style={{ color: pm.color }}>{pm.label} Plan</div>
+                <span className="plan-current-badge" style={{ background: pm.bg, color: pm.color, border: `1px solid ${pm.border}` }}>{pm.label}</span>
                 {plan === 'free' && <div className="plan-current-sub">Up to 300 students · Manual payments only</div>}
                 {plan === 'pro'  && <div className="plan-current-sub">Up to 800 students · M-Pesa + WhatsApp invoices</div>}
                 {plan === 'max'  && <div className="plan-current-sub">Unlimited students · Full automation + instant receipts</div>}
@@ -186,13 +239,15 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
+          {/* ── Display ── */}
           {tab === 'display' && (
             <div className="settings-fields">
               <div className="field-group">
                 <label className={lbl}>Theme</label>
                 <div className="theme-toggle-row">
                   {['dark', 'light'].map(t => (
-                    <button key={t} className={`theme-option${theme === t ? ' active' : ''}`} onClick={() => { if (theme !== t) toggleTheme(); }}>
+                    <button key={t} className={`theme-option${theme === t ? ' active' : ''}`}
+                      onClick={() => { if (theme !== t) toggleTheme(); }}>
                       {t === 'dark' ? '🌙 Dark' : '☀️ Light'}
                     </button>
                   ))}
@@ -203,8 +258,9 @@ function UserSettingsModal({ onClose }) {
           )}
         </div>
 
+        {/* Footer — sign out goes to Landing '/' */}
         <div className="settings-footer">
-          <button className="settings-logout-btn" onClick={() => { logout(); resetStore(); navigate('/login'); }}>
+          <button className="settings-logout-btn" onClick={() => { logout(); resetStore(); navigate('/'); }}>
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
             </svg>
@@ -228,11 +284,8 @@ export default function AppLayout() {
   const [sidebarOpen,  setSidebarOpen]  = useState(false);
   const pm = PLAN_META[plan] || PLAN_META.free;
 
-  // ── Bootstrap once when the layout mounts (user just logged in / refreshed)
   useEffect(() => {
-    if (token && !loaded) {
-      bootstrap(token);
-    }
+    if (token && !loaded) bootstrap(token);
   }, [token, loaded, bootstrap]);
 
   useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
@@ -257,7 +310,6 @@ export default function AppLayout() {
     },
   ];
 
-  // Show a slim loading bar while bootstrapping on first visit
   if (!loaded) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)" }}>

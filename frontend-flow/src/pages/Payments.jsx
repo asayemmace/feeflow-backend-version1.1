@@ -14,17 +14,23 @@ const PayIcon   = () => <svg width="16" height="16" fill="none" viewBox="0 0 24 
 const QIcon     = () => <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>;
 const TrashIcon = () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
 const PrintIcon = () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>;
+const LockIcon  = () => <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>;
 
 const MethodBadge = ({ method }) => {
-  const c = { mpesa: { label: "M-Pesa", color: "var(--green)", bg: "var(--green-bg)", border: "var(--green-border)" }, bank: { label: "Bank", color: "var(--blue)", bg: "var(--blue-bg)", border: "var(--blue-border)" }, cash: { label: "Cash", color: "var(--amber)", bg: "var(--amber-bg)", border: "var(--amber-border)" }, manual: { label: "Manual", color: "var(--text3)", bg: "var(--surface2)", border: "var(--border)" } }[method?.toLowerCase()] || { label: method || "—", color: "var(--text3)", bg: "var(--surface2)", border: "var(--border)" };
+  const c = {
+    mpesa: { label: "M-Pesa", color: "var(--green)", bg: "var(--green-bg)", border: "var(--green-border)" },
+    bank:  { label: "Bank",   color: "var(--blue)",  bg: "var(--blue-bg)",  border: "var(--blue-border)"  },
+    cash:  { label: "Cash",   color: "var(--amber)", bg: "var(--amber-bg)", border: "var(--amber-border)" },
+  }[method?.toLowerCase()] || { label: method || "—", color: "var(--text3)", bg: "var(--surface2)", border: "var(--border)" };
   return <span style={{ display: "inline-flex", alignItems: "center", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: c.bg, border: `1px solid ${c.border}`, color: c.color, flexShrink: 0 }}>{c.label}</span>;
 };
 
 const inp = { width: "100%", padding: "10px 12px", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 8, color: "var(--text)", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
 
-// ─── Receipt printer ──────────────────────────────────────────────────────────
+// ─── Receipt printer — includes method, fee types, date ──────────────────────
 function printReceipt(payment, schoolName = "FeeFlow School") {
-  const win = window.open("", "_blank", "width=420,height=560");
+  const methodLabel = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash" };
+  const win = window.open("", "_blank", "width=420,height=600");
   win.document.write(`
     <!DOCTYPE html><html><head><title>Receipt</title>
     <style>
@@ -35,16 +41,27 @@ function printReceipt(payment, schoolName = "FeeFlow School") {
       h2{font-size:15px;font-weight:700;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #059669}
       .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #eee;font-size:12.5px}
       .row .label{color:#666}
-      .row .val{font-weight:600;text-align:right}
+      .row .val{font-weight:600;text-align:right;max-width:60%}
       .amount{font-size:22px;font-weight:800;color:#059669;text-align:center;padding:16px 0;margin:12px 0;background:#f0fdf4;border-radius:8px}
+      .section{margin-top:14px;font-size:11.5px;color:#666;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
       .footer{text-align:center;font-size:11px;color:#aaa;margin-top:20px;padding-top:12px;border-top:1px dashed #ddd}
+      @media print{body{padding:16px}}
     </style></head><body>
     <div class="logo">FeeFlow</div>
     <div class="school">${schoolName}</div>
     <h2>Payment Receipt</h2>
     <div class="amount">${payment.amount}</div>
-    ${[["Student", payment.name], ["Class & Adm", payment.meta], ["Method", payment.method?.toUpperCase() || "MANUAL"], payment.txn && payment.txn !== "—" ? ["Reference", payment.txn] : null, ["Date", payment.time]].filter(Boolean).map(([l, v]) => `<div class="row"><span class="label">${l}</span><span class="val">${v}</span></div>`).join("")}
-    ${payment.feeBreakdown?.length ? `<div style="margin-top:12px;font-size:11.5px;color:#666;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fee Breakdown</div>${payment.feeBreakdown.map(fb => `<div class="row"><span class="label">${fb.typeName}</span><span class="val">KES ${Number(fb.amount).toLocaleString()}</span></div>`).join("")}` : ""}
+    ${[
+      ["Student",    payment.name],
+      ["Class · Adm", payment.meta],
+      ["Method",     methodLabel[payment.method?.toLowerCase()] || payment.method?.toUpperCase() || "—"],
+      payment.txn && payment.txn !== "—" ? ["M-Pesa Ref", payment.txn] : null,
+      ["Date",       payment.time],
+    ].filter(Boolean).map(([l, v]) => `<div class="row"><span class="label">${l}</span><span class="val">${v}</span></div>`).join("")}
+    ${payment.feeBreakdown?.length ? `
+      <div class="section">Fee Breakdown</div>
+      ${payment.feeBreakdown.map(fb => `<div class="row"><span class="label">${fb.typeName}</span><span class="val">KES ${Number(fb.amount).toLocaleString()}</span></div>`).join("")}
+    ` : ""}
     <div class="footer">Thank you for your payment · FeeFlow Fee Management</div>
     </body></html>
   `);
@@ -55,23 +72,22 @@ function printReceipt(payment, schoolName = "FeeFlow School") {
 
 // ─── Delete Confirm Modal ─────────────────────────────────────────────────────
 function DeleteConfirmModal({ payment, onClose, token }) {
-  const deletePayment  = useAppStore(s => s.deletePayment);
-  const updateStudent  = useAppStore(s => s.updateStudent);
-  const students       = useAppStore(s => s.students);
-  const refreshStats   = useAppStore(s => s.refreshStats);
+  const deletePayment = useAppStore(s => s.deletePayment);
+  const updateStudent = useAppStore(s => s.updateStudent);
+  const students      = useAppStore(s => s.students);
+  const refreshStats  = useAppStore(s => s.refreshStats);
   const [deleting, setDeleting] = useState(false);
-  const [error, setError]       = useState("");
+  const [error,    setError]    = useState("");
 
   const handleDelete = async () => {
     setDeleting(true); setError("");
     try {
-      const res = await axios.delete(`${API}/api/payments/${payment.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.delete(`${API}/api/payments/${payment.id}`, { headers: { Authorization: `Bearer ${token}` } });
       deletePayment(payment.id);
-      // update the student's paid amount in the store
-      const student = students.find(s => s.id === (res.data?.studentId || payment.studentId));
+      const student = students.find(s => s.id === payment.studentId);
       if (student) {
-        const amount = typeof payment.amount === "string" ? parseFloat(payment.amount.replace(/[^0-9.]/g, "")) : payment.amount || 0;
-        updateStudent({ ...student, paid: Math.max(0, student.paid - amount) });
+        const amt = typeof payment.amount === "string" ? parseFloat(payment.amount.replace(/[^0-9.]/g, "")) : payment.amount || 0;
+        updateStudent({ ...student, paid: Math.max(0, student.paid - amt) });
       }
       refreshStats(token);
       onClose();
@@ -113,11 +129,10 @@ function DeleteConfirmModal({ payment, onClose, token }) {
 
 // ─── Assign Unmatched Modal ───────────────────────────────────────────────────
 function AssignModal({ payment, onClose, token }) {
-  const students      = useAppStore(s => s.students);
+  const students        = useAppStore(s => s.students);
   const removeUnmatched = useAppStore(s => s.removeUnmatched);
-  const updateStudent = useAppStore(s => s.updateStudent);
-  const refreshStats  = useAppStore(s => s.refreshStats);
-
+  const updateStudent   = useAppStore(s => s.updateStudent);
+  const refreshStats    = useAppStore(s => s.refreshStats);
   const [search,    setSearch]    = useState("");
   const [selected,  setSelected]  = useState(null);
   const [assigning, setAssigning] = useState(false);
@@ -131,7 +146,6 @@ function AssignModal({ payment, onClose, token }) {
     try {
       await axios.post(`${API}/api/payments/unmatched/${payment.id}/assign`, { studentId: selected.id }, { headers: { Authorization: `Bearer ${token}` } });
       removeUnmatched(payment.id);
-      // Update the student's paid in the store
       const rawAmt = payment.rawAmount || (typeof payment.amount === "string" ? parseFloat(payment.amount.replace(/[^0-9.]/g, "")) : payment.amount || 0);
       updateStudent({ ...selected, paid: selected.paid + rawAmt });
       refreshStats(token);
@@ -151,7 +165,6 @@ function AssignModal({ payment, onClose, token }) {
           </div>
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text2)", fontSize: 14 }}>×</button>
         </div>
-
         <div style={{ margin: "14px 18px 0", background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 9, padding: "12px 14px", flexShrink: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
@@ -161,20 +174,18 @@ function AssignModal({ payment, onClose, token }) {
             <div style={{ fontSize: 18, fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{payment.amount}</div>
           </div>
         </div>
-
         <div style={{ padding: "14px 18px 0", flexShrink: 0 }}>
           <div style={{ position: "relative" }}>
             <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text3)" }}><SearchIcon /></span>
             <input style={{ ...inp, paddingLeft: 34 }} placeholder="Search student by name or adm…" value={search} onChange={e => setSearch(e.target.value)} autoFocus />
           </div>
         </div>
-
         <div style={{ flex: 1, overflowY: "auto", margin: "10px 18px 0", border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden" }}>
           {filtered.length === 0
             ? <div style={{ padding: 20, textAlign: "center", fontSize: 13, color: "var(--text3)" }}>No students found.</div>
             : filtered.map(s => {
-              const isSel    = selected?.id === s.id;
-              const balance  = Math.max(0, s.fee - s.paid);
+              const isSel   = selected?.id === s.id;
+              const balance = Math.max(0, s.fee - s.paid);
               return (
                 <div key={s.id} onClick={() => setSelected(s)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", cursor: "pointer", background: isSel ? "var(--green-bg)" : "transparent", borderLeft: `3px solid ${isSel ? "var(--green)" : "transparent"}`, borderBottom: "1px solid var(--border)", transition: "all .1s" }}>
                   <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, background: "var(--surface2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "var(--text2)" }}>
@@ -195,9 +206,7 @@ function AssignModal({ payment, onClose, token }) {
             })
           }
         </div>
-
         {error && <div style={{ margin: "10px 18px 0", fontSize: 12.5, color: "var(--red)" }}>{error}</div>}
-
         <div style={{ padding: "14px 18px", borderTop: "1px solid var(--border)", display: "flex", gap: 10, justifyContent: "flex-end", flexShrink: 0 }}>
           <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           <button onClick={handleAssign} disabled={!selected || assigning} style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: selected && !assigning ? "var(--green)" : "var(--surface2)", border: "none", color: selected && !assigning ? "#0b1a14" : "var(--text3)", cursor: selected && !assigning ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
@@ -216,7 +225,8 @@ function PaymentFeeTypeSelector({ feeTypes, selectedIds, onToggle, feeAmounts, o
       {feeTypes.map(ft => {
         const isSelected = selectedIds.includes(ft.id);
         const suggested  = feeMatrix?.[studentClass]?.[ft.id] || 0;
-        const amount     = feeAmounts[ft.id] ?? (isSelected ? suggested : "");
+        // Use empty string as placeholder, never pre-fill with 0
+        const amount     = isSelected ? (feeAmounts[ft.id] !== undefined ? feeAmounts[ft.id] : suggested) : "";
         return (
           <div key={ft.id} style={{ display: "flex", alignItems: "center", gap: 10, background: isSelected ? "var(--green-bg)" : "var(--surface3)", border: `1px solid ${isSelected ? "var(--green-border)" : "var(--border)"}`, borderRadius: 8, padding: "9px 12px", transition: "all .15s" }}>
             <div onClick={() => onToggle(ft.id, suggested)} style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, border: `2px solid ${isSelected ? "var(--green)" : "var(--text3)"}`, background: isSelected ? "var(--green)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
@@ -229,7 +239,20 @@ function PaymentFeeTypeSelector({ feeTypes, selectedIds, onToggle, feeAmounts, o
             {isSelected && (
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                 <span style={{ fontSize: 11, color: "var(--text3)" }}>KES</span>
-                <input type="number" min="0" value={amount} onChange={e => onAmountChange(ft.id, e.target.value)} placeholder={suggested || "0"} style={{ width: 90, padding: "5px 8px", textAlign: "right", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 6, color: "var(--text)", fontSize: 12.5, fontFamily: "inherit", outline: "none" }} onClick={e => e.stopPropagation()} />
+                <input
+                  type="number" min="0"
+                  // Use string value so clearing works; 0 shows as empty placeholder
+                  value={feeAmounts[ft.id] !== undefined ? feeAmounts[ft.id] : (suggested || "")}
+                  onChange={e => {
+                    // Replace leading zeros: parse then set so "050000" becomes "50000"
+                    const raw = e.target.value;
+                    const num = raw === "" ? "" : String(parseInt(raw, 10) || 0);
+                    onAmountChange(ft.id, num);
+                  }}
+                  placeholder={suggested > 0 ? suggested.toLocaleString() : "0"}
+                  style={{ width: 90, padding: "5px 8px", textAlign: "right", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 6, color: "var(--text)", fontSize: 12.5, fontFamily: "inherit", outline: "none" }}
+                  onClick={e => e.stopPropagation()}
+                />
               </div>
             )}
           </div>
@@ -241,68 +264,76 @@ function PaymentFeeTypeSelector({ feeTypes, selectedIds, onToggle, feeAmounts, o
 
 // ─── Add Payment Modal ────────────────────────────────────────────────────────
 function AddPaymentModal({ onClose }) {
-  const { token, canUse }       = useAuth();
-  const { feeTypes, feeMatrix } = useFeeStructure();
-  const students    = useAppStore(s => s.students);
-  const addPayment  = useAppStore(s => s.addPayment);
+  const { token, canUse, plan }  = useAuth();
+  const { feeTypes, feeMatrix }  = useFeeStructure();
+  const students      = useAppStore(s => s.students);
+  const addPayment    = useAppStore(s => s.addPayment);
   const updateStudent = useAppStore(s => s.updateStudent);
   const refreshStats  = useAppStore(s => s.refreshStats);
 
-  const [classFilter, setClassFilter]   = useState("all");
-  const [search, setSearch]             = useState("");
-  const [selected, setSelected]         = useState(null);
+  const [classFilter,      setClassFilter]      = useState("all");
+  const [search,           setSearch]           = useState("");
+  const [selected,         setSelected]         = useState(null);
   const [selectedFeeTypes, setSelectedFeeTypes] = useState([]);
-  const [feeAmounts, setFeeAmounts]     = useState({});
-  const [othersLabel, setOthersLabel]   = useState("");
-  const [form, setForm]                 = useState({ phone: "", txnRef: "", method: "mpesa" });
-  const [saving, setSaving]             = useState(false);
-  const [stkLoading, setStkLoading]     = useState(false);
-  const [stkSent, setStkSent]           = useState(false);
-  const [error, setError]               = useState("");
+  const [feeAmounts,       setFeeAmounts]       = useState({});
+  const [othersLabel,      setOthersLabel]      = useState("");
+  const [form,             setForm]             = useState({ phone: "", txnRef: "", method: "mpesa" });
+  const [saving,           setSaving]           = useState(false);
+  const [stkLoading,       setStkLoading]       = useState(false);
+  const [stkSent,          setStkSent]          = useState(false);
+  const [error,            setError]            = useState("");
+
+  const canSTK = canUse?.("mpesa");
 
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
-  const selectStudent = s => { setSelected(s); setSelectedFeeTypes([]); setFeeAmounts({}); setOthersLabel(""); };
+  const selectStudent = s => { setSelected(s); setSelectedFeeTypes([]); setFeeAmounts({}); setOthersLabel(""); setStkSent(false); };
 
   const handleToggleFeeType = (typeId, suggested) => {
     setSelectedFeeTypes(prev => {
       const isIn = prev.includes(typeId);
-      if (isIn) { setFeeAmounts(fa => { const { [typeId]: _, ...rest } = fa; return rest; }); return prev.filter(id => id !== typeId); }
+      if (isIn) {
+        setFeeAmounts(fa => { const { [typeId]: _, ...rest } = fa; return rest; });
+        return prev.filter(id => id !== typeId);
+      }
       if (suggested > 0) setFeeAmounts(fa => ({ ...fa, [typeId]: suggested }));
       return [...prev, typeId];
     });
   };
 
-  const handleAmountChange = (typeId, val) => setFeeAmounts(fa => ({ ...fa, [typeId]: Number(val) || 0 }));
+  const handleAmountChange = (typeId, val) => {
+    const num = val === "" ? "" : String(parseInt(val, 10) || 0);
+    setFeeAmounts(fa => ({ ...fa, [typeId]: num }));
+  };
 
-  const totalAmount    = selectedFeeTypes.reduce((s, id) => s + (Number(feeAmounts[id]) || 0), 0);
+  const totalAmount    = selectedFeeTypes.reduce((s, id) => s + (parseInt(feeAmounts[id], 10) || 0), 0);
   const classes        = [...new Set(students.map(s => s.cls))].sort();
-  const filteredStu    = students.filter(s => classFilter === "all" || s.cls === classFilter).filter(s => !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.adm?.toLowerCase().includes(search.toLowerCase()));
+  const filteredStu    = students
+    .filter(s => classFilter === "all" || s.cls === classFilter)
+    .filter(s => !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.adm?.toLowerCase().includes(search.toLowerCase()));
   const balance        = selected ? Math.max(0, selected.fee - selected.paid) : 0;
   const phoneClean     = form.phone.replace(/\s/g, "");
   const phoneValid     = /^(07|01)\d{8}$/.test(phoneClean);
-  const canSTK         = canUse?.("mpesa");
   const selectedOthers = selectedFeeTypes.includes("others");
 
   const handleSave = async () => {
     if (!selected)                     return setError("Select a student.");
-    if (totalAmount <= 0)              return setError("Enter a valid amount.");
+    if (totalAmount <= 0)              return setError("Enter a valid amount for at least one fee type.");
     if (selectedFeeTypes.length === 0) return setError("Select at least one fee type.");
     if (selectedOthers && !othersLabel.trim()) return setError("Specify the 'Others' description.");
     setSaving(true); setError("");
     try {
-      const feeBreakdown = selectedFeeTypes.map(id => ({ typeId: id, typeName: id === "others" ? othersLabel : feeTypes.find(ft => ft.id === id)?.name || id, amount: Number(feeAmounts[id]) || 0 }));
+      const feeBreakdown = selectedFeeTypes.map(id => ({
+        typeId: id,
+        typeName: id === "others" ? othersLabel : feeTypes.find(ft => ft.id === id)?.name || id,
+        amount: parseInt(feeAmounts[id], 10) || 0,
+      }));
       const res = await axios.post(`${API}/api/payments`,
         { studentId: selected.id, amount: totalAmount, txnRef: form.txnRef || null, method: form.method, feeBreakdown },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       addPayment(res.data);
-      // update student paid in store
-      if (res.data.updatedStudent) {
-        updateStudent({ ...selected, ...res.data.updatedStudent });
-      } else {
-        updateStudent({ ...selected, paid: selected.paid + totalAmount });
-      }
+      updateStudent({ ...selected, paid: selected.paid + totalAmount });
       refreshStats(token);
       onClose();
     } catch (e) { setError(e.response?.data?.message || "Failed to save."); }
@@ -329,6 +360,7 @@ function AddPaymentModal({ onClose }) {
         </div>
 
         <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 20, overflowY: "auto", maxHeight: "65vh", WebkitOverflowScrolling: "touch" }}>
+
           {/* Student picker */}
           <div>
             <label className="settings-label" style={{ marginBottom: 8, display: "block" }}>Select Student</label>
@@ -370,9 +402,12 @@ function AddPaymentModal({ onClose }) {
             </div>
           </div>
 
+          {/* Fee types */}
           {selected && (
             <div>
-              <label className="settings-label" style={{ marginBottom: 8, display: "block" }}>Fee Types <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 400, textTransform: "none" }}>amounts auto-filled</span></label>
+              <label className="settings-label" style={{ marginBottom: 8, display: "block" }}>
+                Fee Types <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 400, textTransform: "none" }}>amounts auto-filled</span>
+              </label>
               <PaymentFeeTypeSelector feeTypes={feeTypes} selectedIds={selectedFeeTypes} onToggle={handleToggleFeeType} feeAmounts={feeAmounts} onAmountChange={handleAmountChange} studentClass={selected.cls} feeMatrix={feeMatrix} />
               {selectedOthers && (
                 <div style={{ marginTop: 10, background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 9, padding: "12px 14px" }}>
@@ -395,6 +430,7 @@ function AddPaymentModal({ onClose }) {
             </div>
           )}
 
+          {/* Payment method — 3 options only, no Manual */}
           {selected && selectedFeeTypes.length > 0 && (
             <>
               <div>
@@ -407,20 +443,49 @@ function AddPaymentModal({ onClose }) {
                   ))}
                 </div>
               </div>
+
+              {/* M-Pesa fields — always shown when mpesa selected, locked for free plan */}
               {form.method === "mpesa" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {canSTK && (
-                    <div>
-                      <label className="settings-label" style={{ marginBottom: 6, display: "block" }}>Phone (STK Push)</label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input style={{ ...inp, flex: 1 }} placeholder="07XX XXX XXX" value={form.phone} onChange={set("phone")} />
-                        <button onClick={handleSTK} disabled={!phoneValid || stkLoading || totalAmount <= 0} style={{ padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: phoneValid && !stkLoading ? "pointer" : "not-allowed", fontFamily: "inherit", background: phoneValid ? "var(--green-bg)" : "var(--surface2)", border: `1px solid ${phoneValid ? "var(--green-border)" : "var(--border)"}`, color: phoneValid ? "var(--green)" : "var(--text3)", whiteSpace: "nowrap" }}>
-                          {stkLoading ? "Sending…" : "STK Push"}
-                        </button>
+                  {/* STK Push section — always visible, locked if free */}
+                  <div style={{ background: canSTK ? "var(--surface2)" : "var(--surface3)", border: `1px solid ${canSTK ? "var(--border)" : "var(--border)"}`, borderRadius: 10, padding: "14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: canSTK ? 10 : 0 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: canSTK ? "var(--text)" : "var(--text3)", display: "flex", alignItems: "center", gap: 6 }}>
+                          {!canSTK && <span style={{ color: "var(--amber)" }}><LockIcon /></span>}
+                          STK Push
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>
+                          {canSTK
+                            ? "Client will receive a prompt on their phone to enter their M-Pesa PIN"
+                            : "Upgrade to Pro to send STK push prompts directly to parents' phones"
+                          }
+                        </div>
                       </div>
-                      {stkSent && <div style={{ fontSize: 12, color: "var(--green)", marginTop: 6 }}>✓ STK sent — waiting for confirmation</div>}
+                      {!canSTK && (
+                        <a href="mailto:yahiawarsame@gmail.com?subject=FeeFlow Pro Upgrade" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 7, fontSize: 11.5, fontWeight: 600, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.25)", color: "var(--amber)", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>
+                          🔒 Upgrade to Pro
+                        </a>
+                      )}
                     </div>
-                  )}
+                    {canSTK && (
+                      <>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input style={{ ...inp, flex: 1 }} placeholder="07XX XXX XXX" value={form.phone} onChange={set("phone")} />
+                          <button onClick={handleSTK} disabled={!phoneValid || stkLoading || totalAmount <= 0} style={{ padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: phoneValid && !stkLoading ? "pointer" : "not-allowed", fontFamily: "inherit", background: phoneValid ? "var(--green-bg)" : "var(--surface2)", border: `1px solid ${phoneValid ? "var(--green-border)" : "var(--border)"}`, color: phoneValid ? "var(--green)" : "var(--text3)", whiteSpace: "nowrap" }}>
+                            {stkLoading ? "Sending…" : "Send Prompt"}
+                          </button>
+                        </div>
+                        {stkSent && (
+                          <div style={{ fontSize: 12, color: "var(--green)", marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                            ✓ Prompt sent — client will receive a pop-up to enter their PIN
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* M-Pesa reference */}
                   <div>
                     <label className="settings-label" style={{ marginBottom: 6, display: "block" }}>M-Pesa reference (optional)</label>
                     <input style={inp} placeholder="e.g. RHJ4KL9X" value={form.txnRef} onChange={set("txnRef")} />
@@ -435,7 +500,8 @@ function AddPaymentModal({ onClose }) {
 
         <div style={{ padding: "14px 22px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !selected || totalAmount <= 0 || selectedFeeTypes.length === 0} style={{ padding: "9px 22px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: (!saving && selected && totalAmount > 0 && selectedFeeTypes.length > 0) ? "var(--green)" : "var(--surface2)", border: "none", color: (!saving && selected && totalAmount > 0 && selectedFeeTypes.length > 0) ? "#0b1a14" : "var(--text3)", cursor: (!saving && selected && totalAmount > 0 && selectedFeeTypes.length > 0) ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          <button onClick={handleSave} disabled={saving || !selected || totalAmount <= 0 || selectedFeeTypes.length === 0}
+            style={{ padding: "9px 22px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: (!saving && selected && totalAmount > 0 && selectedFeeTypes.length > 0) ? "var(--green)" : "var(--surface2)", border: "none", color: (!saving && selected && totalAmount > 0 && selectedFeeTypes.length > 0) ? "#0b1a14" : "var(--text3)", cursor: (!saving && selected && totalAmount > 0 && selectedFeeTypes.length > 0) ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
             {saving ? "Saving…" : `Save — KES ${totalAmount.toLocaleString()}`}
           </button>
         </div>
@@ -446,27 +512,29 @@ function AddPaymentModal({ onClose }) {
 
 // ─── Payments Page ─────────────────────────────────────────────────────────────
 export default function Payments() {
-  const { token }       = useAuth();
+  const { token, user } = useAuth();
   const { openSidebar } = useOutletContext();
-  const { user }        = useAuth();
 
-  const payments        = useAppStore(s => s.payments);
-  const unmatched       = useAppStore(s => s.unmatched);
-  const paymentsLoaded  = useAppStore(s => s.paymentsLoaded);
-  const students        = useAppStore(s => s.students);
+  const payments       = useAppStore(s => s.payments);
+  const unmatched      = useAppStore(s => s.unmatched);
+  const paymentsLoaded = useAppStore(s => s.paymentsLoaded);
+  const students       = useAppStore(s => s.students);
 
-  const [showModal,    setShowModal]    = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [assignTarget, setAssignTarget] = useState(null);
-  const [search,       setSearch]       = useState("");
-  const [methodFilter, setMethodFilter] = useState("all");
-  const [dateFilter,   setDateFilter]   = useState("all");
-  const [studentFilter, setStudentFilter] = useState("all"); // NEW — per-student filter
+  const [showModal,     setShowModal]     = useState(false);
+  const [deleteTarget,  setDeleteTarget]  = useState(null);
+  const [assignTarget,  setAssignTarget]  = useState(null);
+  const [search,        setSearch]        = useState("");
+  // Only the 3 real methods — no Manual filter
+  const [methodFilter,  setMethodFilter]  = useState("all");
+  const [dateFilter,    setDateFilter]    = useState("all");
+  const [studentFilter, setStudentFilter] = useState("all");
 
   const now = Date.now();
   const filtered = useMemo(() => payments.filter(p => {
     const matchSearch  = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.txn?.toLowerCase().includes(search.toLowerCase());
-    const matchMethod  = methodFilter === "all" || (p.method || "manual").toLowerCase() === methodFilter;
+    // treat "manual" as cash for display filter purposes
+    const method = (p.method || "cash").toLowerCase() === "manual" ? "cash" : (p.method || "cash").toLowerCase();
+    const matchMethod  = methodFilter === "all" || method === methodFilter;
     const ts           = p.createdAt ? new Date(p.createdAt).getTime() : 0;
     const matchDate    = dateFilter === "all" ? true : dateFilter === "today" ? ts > now - 86400000 : dateFilter === "week" ? ts > now - 7 * 86400000 : ts > now - 30 * 86400000;
     const matchStudent = studentFilter === "all" || p.studentId === studentFilter || p.name === studentFilter;
@@ -478,7 +546,6 @@ export default function Payments() {
     return s + n;
   }, 0), [filtered]);
 
-  // Unique students with payments (for dropdown)
   const studentsWithPayments = useMemo(() => {
     const ids = new Set(payments.map(p => p.studentId).filter(Boolean));
     return students.filter(s => ids.has(s.id));
@@ -491,27 +558,28 @@ export default function Payments() {
       </Topbar>
 
       <div className="page-content">
-        {/* Filters row 1 */}
+        {/* Filters */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: "1 1 200px", minWidth: 160 }}>
             <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text3)" }}><SearchIcon /></span>
             <input style={{ width: "100%", paddingLeft: 34, paddingRight: 12, height: 40, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} placeholder="Search by name or ref…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
 
-          {/* Per-student filter — NEW */}
+          {/* Per-student filter */}
           <select value={studentFilter} onChange={e => setStudentFilter(e.target.value)} style={{ height: 40, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 9, padding: "0 12px", fontSize: 13.5, minWidth: 160, fontFamily: "inherit" }}>
             <option value="all">All students</option>
             {studentsWithPayments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
 
-          {["all", "mpesa", "bank", "cash", "manual"].map(m => (
+          {/* Method filter — 3 options only, no Manual */}
+          {["all", "mpesa", "bank", "cash"].map(m => (
             <button key={m} onClick={() => setMethodFilter(m)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", background: methodFilter === m ? "var(--blue-bg)" : "var(--surface2)", border: `1px solid ${methodFilter === m ? "var(--blue-border)" : "var(--border)"}`, color: methodFilter === m ? "var(--blue)" : "var(--text2)" }}>
               {m === "all" ? "All" : m === "mpesa" ? "M-Pesa" : m.charAt(0).toUpperCase() + m.slice(1)}
             </button>
           ))}
         </div>
 
-        {/* Date + summary row */}
+        {/* Date + summary */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
           {["all", "today", "week", "month"].map(d => (
             <button key={d} onClick={() => setDateFilter(d)} style={{ padding: "6px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", background: dateFilter === d ? "var(--blue-bg)" : "var(--surface2)", border: `1px solid ${dateFilter === d ? "var(--blue-border)" : "var(--border)"}`, color: dateFilter === d ? "var(--blue)" : "var(--text2)" }}>
@@ -558,7 +626,7 @@ export default function Payments() {
                     {p.feeBreakdown?.length > 0 && p.feeBreakdown.map((fb, fi) => <span key={fi} style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 4, background: "var(--surface3)", border: "1px solid var(--border)", color: "var(--text3)" }}>{fb.typeName}</span>)}
                   </div>
                 </div>
-                <MethodBadge method={p.method || "manual"} />
+                <MethodBadge method={p.method === "manual" ? "cash" : p.method} />
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--green)", fontVariantNumeric: "tabular-nums" }}>+{p.amount}</div>
                   <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>{p.time}</div>

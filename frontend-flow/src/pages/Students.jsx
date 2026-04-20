@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import { useOutletContext } from "react-router-dom";
@@ -42,20 +42,16 @@ function ProgressBar({ fee, paid, height = 4 }) {
   );
 }
 
+const TrashIcon = () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
+
 // ─── Edit Student Modal ───────────────────────────────────────────────────────
 function EditStudentModal({ student, onClose, token }) {
   const { classes } = useFeeStructure();
   const updateStudent = useAppStore(s => s.updateStudent);
 
-  const [form, setForm] = useState({
-    name:  student.name  || "",
-    cls:   student.cls   || "",
-    phone: student.phone || "",
-    fee:   student.fee   || "",
-  });
+  const [form, setForm] = useState({ name: student.name || "", cls: student.cls || "", phone: student.phone || "", fee: student.fee || "" });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
-
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const handleSave = async () => {
@@ -63,7 +59,6 @@ function EditStudentModal({ student, onClose, token }) {
     if (!form.cls)          { setError("Select a class."); return; }
     const fee = parseFloat(form.fee);
     if (isNaN(fee) || fee <= 0) { setError("Enter a valid fee."); return; }
-
     setSaving(true); setError("");
     try {
       const res = await axios.patch(`${API}/api/students/${student.id}`,
@@ -72,9 +67,8 @@ function EditStudentModal({ student, onClose, token }) {
       );
       updateStudent(res.data);
       onClose();
-    } catch (e) {
-      setError(e.response?.data?.message || "Failed to update student.");
-    } finally { setSaving(false); }
+    } catch (e) { setError(e.response?.data?.message || "Failed to update student."); }
+    finally { setSaving(false); }
   };
 
   const inp = { width: "100%", padding: "10px 12px", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 8, color: "var(--text)", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
@@ -90,7 +84,6 @@ function EditStudentModal({ student, onClose, token }) {
           </div>
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text2)", fontSize: 14 }}>×</button>
         </div>
-
         <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 14 }}>
           <div className="field-group">
             <label className="settings-label">Full name *</label>
@@ -115,7 +108,6 @@ function EditStudentModal({ student, onClose, token }) {
           </div>
           {error && <div style={{ fontSize: 12.5, color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red-border)", borderRadius: 8, padding: "10px 12px" }}>✕ {error}</div>}
         </div>
-
         <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           <button onClick={handleSave} disabled={saving} style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: saving ? "var(--surface2)" : "var(--green)", border: "none", color: saving ? "var(--text3)" : "#0b1a14", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
@@ -127,29 +119,69 @@ function EditStudentModal({ student, onClose, token }) {
   );
 }
 
+// ─── Delete Student Confirm Modal ─────────────────────────────────────────────
+function DeleteStudentModal({ student, onClose, token, onDeleted }) {
+  const removeStudent = useAppStore(s => s.removeStudent);
+  const refreshStats  = useAppStore(s => s.refreshStats);
+  const [deleting, setDeleting] = useState(false);
+  const [error,    setError]    = useState("");
+
+  const handleDelete = async () => {
+    setDeleting(true); setError("");
+    try {
+      await axios.delete(`${API}/api/students/${student.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      removeStudent(student.id);
+      refreshStats(token);
+      onDeleted();
+      onClose();
+    } catch (e) { setError(e.response?.data?.message || "Failed to delete student."); }
+    finally { setDeleting(false); }
+  };
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", zIndex: 70, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 400, background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 14, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", padding: 24, animation: "modalIn .18s ease" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--red-bg)", border: "1px solid var(--red-border)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--red)", flexShrink: 0 }}><TrashIcon /></div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Remove Student?</div>
+            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 2 }}>This will permanently delete their record</div>
+          </div>
+        </div>
+        <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 9, padding: "12px 14px", marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>{student.name}</div>
+          <div style={{ fontSize: 12, color: "var(--text3)" }}>{student.cls} · {student.adm}</div>
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--amber)", background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 8, padding: "10px 12px", marginBottom: 16 }}>
+          ⚠ This will also delete all payment records for this student. This cannot be undone.
+        </div>
+        {error && <div style={{ fontSize: 12.5, color: "var(--red)", marginBottom: 12 }}>{error}</div>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={handleDelete} disabled={deleting} style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: deleting ? "var(--surface2)" : "var(--red)", border: "none", color: deleting ? "var(--text3)" : "#fff", cursor: deleting ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+            {deleting ? "Removing…" : "Remove student"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Student Profile Modal ─────────────────────────────────────────────────────
 function StudentProfileModal({ studentId, onClose, onEdit, token }) {
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState("");
+  const [data,          setData]          = useState(null);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState("");
+  const [showDeleteStu, setShowDeleteStu] = useState(false);
 
-  // Fetch on open
-  useState(() => {
+  useEffect(() => {
+    setLoading(true);
     axios.get(`${API}/api/students/${studentId}/payments`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => setData(r.data))
       .catch(() => setError("Failed to load profile."))
       .finally(() => setLoading(false));
-  });
-
-  // Re-fetch on mount
-  const [fetched, setFetched] = useState(false);
-  if (!fetched) {
-    setFetched(true);
-    axios.get(`${API}/api/students/${studentId}/payments`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => setData(r.data))
-      .catch(() => setError("Failed to load profile."))
-      .finally(() => setLoading(false));
-  }
+  }, [studentId, token]);
 
   const methodColor = { mpesa: "var(--green)", bank: "var(--blue)", cash: "var(--amber)", manual: "var(--text3)" };
   const methodLabel = { mpesa: "M-Pesa", bank: "Bank", cash: "Cash", manual: "Manual" };
@@ -158,16 +190,27 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
     <>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} />
       <div style={{ position: "fixed", top: "50%", left: "50%", zIndex: 50, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 520, background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", maxHeight: "90vh", animation: "modalIn .2s ease" }}>
+
+        {/* Header */}
         <div style={{ padding: "18px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Student Profile</div>
           <div style={{ display: "flex", gap: 8 }}>
-            {data && <button onClick={() => onEdit(data.student)} style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>✏ Edit</button>}
-            <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--text2)", fontSize: 14 }}
+            {data && (
+              <button onClick={() => onEdit(data.student)}
+                style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>
+                ✏ Edit
+              </button>
+            )}
+            <button onClick={onClose}
+              style={{ width: 30, height: 30, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--text2)", fontSize: 14 }}
               onMouseEnter={e => { e.currentTarget.style.color = "var(--red)"; e.currentTarget.style.borderColor = "var(--red-border)"; }}
-              onMouseLeave={e => { e.currentTarget.style.color = "var(--text2)"; e.currentTarget.style.borderColor = "var(--border)"; }}>×</button>
+              onMouseLeave={e => { e.currentTarget.style.color = "var(--text2)"; e.currentTarget.style.borderColor = "var(--border)"; }}>
+              ×
+            </button>
           </div>
         </div>
 
+        {/* Body */}
         <div style={{ overflowY: "auto", flex: 1, WebkitOverflowScrolling: "touch" }}>
           {loading ? (
             <div style={{ padding: "48px 20px", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>
@@ -191,6 +234,7 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
                   </div>
                 </div>
 
+                {/* Cross-term status */}
                 {data.allTermsCleared ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--green-bg)", border: "1px solid var(--green-border)", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
                     <span>✅</span>
@@ -203,11 +247,12 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
                   </div>
                 ) : null}
 
+                {/* Fee stats */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
                   {[
-                    { label: "Term Fee",  value: `KES ${Number(data.student.fee).toLocaleString()}`,  color: "var(--text)" },
-                    { label: "Paid",      value: `KES ${Number(data.student.paid).toLocaleString()}`, color: "var(--green)" },
-                    { label: "Balance",   value: data.student.paid >= data.student.fee ? "Cleared" : `KES ${(data.student.fee - data.student.paid).toLocaleString()}`, color: data.student.paid >= data.student.fee ? "var(--green)" : "var(--red)" },
+                    { label: "Term Fee", value: `KES ${Number(data.student.fee).toLocaleString()}`, color: "var(--text)" },
+                    { label: "Paid",     value: `KES ${Number(data.student.paid).toLocaleString()}`, color: "var(--green)" },
+                    { label: "Balance",  value: data.student.paid >= data.student.fee ? "Cleared" : `KES ${(data.student.fee - data.student.paid).toLocaleString()}`, color: data.student.paid >= data.student.fee ? "var(--green)" : "var(--red)" },
                   ].map(s => (
                     <div key={s.label} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
                       <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.5px" }}>{s.value}</div>
@@ -222,6 +267,7 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
                 </div>
               </div>
 
+              {/* Payment history */}
               <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text3)", textTransform: "uppercase", letterSpacing: ".8px", marginBottom: 10 }}>Payment History</div>
 
               {data.termSummaries.length === 0 ? (
@@ -256,17 +302,43 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
                         </div>
                       ))
                     }
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 16px", background: "rgba(0,0,0,0.15)", borderTop: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 16px", background: "rgba(0,0,0,0.08)", borderTop: "1px solid var(--border)" }}>
                       <span style={{ fontSize: 12, color: "var(--text3)" }}>Total paid this term</span>
                       <span style={{ fontSize: 13, fontWeight: 700, color: "var(--green)", fontVariantNumeric: "tabular-nums" }}>KES {Number(term.paid).toLocaleString()}</span>
                     </div>
                   </div>
                 </div>
               ))}
+
+              {/* Delete student — at the bottom, clearly separated */}
+              <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginBottom: 10 }}>
+                  Danger zone — only remove students who have left the school.
+                </div>
+                <button
+                  onClick={() => setShowDeleteStu(true)}
+                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--red-bg)", border: "1px solid var(--red-border)", color: "var(--red)", cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "var(--red)"; e.currentTarget.style.color = "#fff"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "var(--red-bg)"; e.currentTarget.style.color = "var(--red)"; }}
+                >
+                  <TrashIcon /> Remove student from school
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Delete student confirm — higher z-index so it overlays the profile modal */}
+      {showDeleteStu && data && (
+        <DeleteStudentModal
+          student={data.student}
+          token={token}
+          onClose={() => setShowDeleteStu(false)}
+          onDeleted={onClose}
+        />
+      )}
+
       <style>{`@keyframes modalIn{from{opacity:0;transform:translate(-50%,-48%)}to{opacity:1;transform:translate(-50%,-50%)}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </>
   );
@@ -286,7 +358,13 @@ function FeeTypeSelector({ feeTypes, selectedIds, onToggle, className, feeMatrix
             </div>
             <span onClick={() => onToggle(ft.id)} style={{ flex: 1, fontSize: 13.5, color: isSelected ? "var(--text)" : "var(--text2)", fontWeight: isSelected ? 500 : 400, cursor: "pointer" }}>{ft.name}</span>
             {isSelected
-              ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 11.5, color: "var(--text3)" }}>KES</span><input type="number" min="0" value={amount || ""} onChange={e => onFeeChange(ft.id, e.target.value)} placeholder="0" style={{ width: 90, padding: "5px 8px", textAlign: "right", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 6, color: "var(--text)", fontSize: 13, fontFamily: "inherit", outline: "none" }} /></div>
+              ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11.5, color: "var(--text3)" }}>KES</span>
+                  <input type="number" min="0" value={amount || ""}
+                    onChange={e => { const num = e.target.value === "" ? "" : String(parseInt(e.target.value, 10) || 0); onFeeChange(ft.id, num); }}
+                    placeholder="0"
+                    style={{ width: 90, padding: "5px 8px", textAlign: "right", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 6, color: "var(--text)", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                </div>
               : amount > 0 && <span style={{ fontSize: 12, color: "var(--text3)", fontVariantNumeric: "tabular-nums" }}>KES {amount.toLocaleString()}</span>
             }
           </div>
@@ -298,16 +376,16 @@ function FeeTypeSelector({ feeTypes, selectedIds, onToggle, className, feeMatrix
 
 // ─── Add Student Modal ─────────────────────────────────────────────────────────
 function AddStudentModal({ onClose }) {
-  const { token } = useAuth();
+  const { token }  = useAuth();
   const { classes, feeTypes, feeMatrix } = useFeeStructure();
-  const addStudent = useAppStore(s => s.addStudent);
+  const addStudent   = useAppStore(s => s.addStudent);
   const refreshStats = useAppStore(s => s.refreshStats);
 
-  const [step, setStep]     = useState(1);
-  const [saving, setSaving] = useState(false);
+  const [step,     setStep]     = useState(1);
+  const [saving,   setSaving]   = useState(false);
   const [apiError, setApiError] = useState("");
-  const [errors, setErrors] = useState({});
-  const [form, setForm]     = useState({ name: "", adm: "", cls: "", phone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
+  const [errors,   setErrors]   = useState({});
+  const [form,     setForm]     = useState({ name: "", adm: "", cls: "", phone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
   const [localFees, setLocalFees] = useState({});
 
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -327,12 +405,17 @@ function AddStudentModal({ onClose }) {
   }
 
   const handleFeeChange     = (id, val) => setLocalFees(prev => ({ ...prev, [id]: Number(val) || 0 }));
-  const handleToggleFeeType = id => setForm(f => ({ ...f, selectedFeeTypes: f.selectedFeeTypes.includes(id) ? f.selectedFeeTypes.filter(x => x !== id) : [...f.selectedFeeTypes, id] }));
+  const handleToggleFeeType = id => setForm(f => ({
+    ...f,
+    selectedFeeTypes: f.selectedFeeTypes.includes(id)
+      ? f.selectedFeeTypes.filter(x => x !== id)
+      : [...f.selectedFeeTypes, id],
+  }));
 
-  const totalDue       = form.selectedFeeTypes.reduce((s, id) => s + (localFees[id] || 0), 0);
-  const paidNum        = parseFloat(form.paidAmount) || 0;
-  const balance        = totalDue - paidNum;
-  const status         = computeStatus(totalDue, paidNum);
+  const totalDue = form.selectedFeeTypes.reduce((s, id) => s + (localFees[id] || 0), 0);
+  const paidNum  = parseFloat(form.paidAmount) || 0;
+  const balance  = totalDue - paidNum;
+  const status   = computeStatus(totalDue, paidNum);
   const selectedOthers = form.selectedFeeTypes.includes("others");
 
   const inp = { width: "100%", height: 42, padding: "0 12px", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 8, color: "var(--text)", fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
@@ -341,14 +424,14 @@ function AddStudentModal({ onClose }) {
 
   const validate = () => {
     const e = {};
-    if (!form.name.trim())                           e.name   = "Required";
-    if (!form.adm.trim())                            e.adm    = "Required";
-    if (!form.cls)                                   e.cls    = "Select a class";
-    if (form.selectedFeeTypes.length === 0)          e.fees   = "Select at least one fee type";
-    if (totalDue <= 0)                               e.fees   = "Total fee must be > 0";
-    if (paidNum < 0)                                 e.paid   = "Cannot be negative";
-    if (paidNum > totalDue)                          e.paid   = "Exceeds total fee";
-    if (selectedOthers && !form.othersLabel.trim())  e.others = "Specify the 'Others' description";
+    if (!form.name.trim())                          e.name   = "Required";
+    if (!form.adm.trim())                           e.adm    = "Required";
+    if (!form.cls)                                  e.cls    = "Select a class";
+    if (form.selectedFeeTypes.length === 0)         e.fees   = "Select at least one fee type";
+    if (totalDue <= 0)                              e.fees   = "Total fee must be > 0";
+    if (paidNum < 0)                                e.paid   = "Cannot be negative";
+    if (paidNum > totalDue)                         e.paid   = "Exceeds total fee";
+    if (selectedOthers && !form.othersLabel.trim()) e.others = "Specify the 'Others' description";
     return e;
   };
 
@@ -357,7 +440,11 @@ function AddStudentModal({ onClose }) {
   const handleSubmit = async () => {
     setSaving(true); setApiError("");
     try {
-      const feeBreakdown = form.selectedFeeTypes.map(id => ({ typeId: id, typeName: id === "others" ? form.othersLabel : feeTypes.find(ft => ft.id === id)?.name || id, amount: localFees[id] || 0 }));
+      const feeBreakdown = form.selectedFeeTypes.map(id => ({
+        typeId: id,
+        typeName: id === "others" ? form.othersLabel : feeTypes.find(ft => ft.id === id)?.name || id,
+        amount: localFees[id] || 0,
+      }));
       const res = await axios.post(`${API}/api/students`,
         { name: form.name.trim(), adm: form.adm.trim(), cls: form.cls, phone: form.phone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
         { headers: { Authorization: `Bearer ${token}` } }
@@ -365,9 +452,8 @@ function AddStudentModal({ onClose }) {
       addStudent(res.data);
       refreshStats(token);
       onClose();
-    } catch (e) {
-      setApiError(e.response?.data?.message || "Failed to save student.");
-    } finally { setSaving(false); }
+    } catch (e) { setApiError(e.response?.data?.message || "Failed to save student."); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -396,13 +482,13 @@ function AddStudentModal({ onClose }) {
               <div className="field-group">
                 <label className="settings-label">Student full name *</label>
                 <input style={inp} value={form.name} onChange={setFv("name")} placeholder="e.g. Amina Wanjiru" autoComplete="off" />
-                {errors.name && <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 4 }}>{errors.name}</div>}
+                {errors.name && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.name}</div>}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="field-group">
                   <label className="settings-label">Admission number *</label>
                   <input style={inp} value={form.adm} onChange={setFv("adm")} placeholder="ADM/2025/001" autoComplete="off" />
-                  {errors.adm && <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 4 }}>{errors.adm}</div>}
+                  {errors.adm && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.adm}</div>}
                 </div>
                 <div className="field-group">
                   <label className="settings-label">Phone (optional)</label>
@@ -415,21 +501,23 @@ function AddStudentModal({ onClose }) {
                   <option value="">Select class…</option>
                   {classes.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                {errors.cls && <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 4 }}>{errors.cls}</div>}
+                {errors.cls && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.cls}</div>}
               </div>
 
               {form.cls && (
                 <>
                   <div>
-                    <label className="settings-label" style={{ marginBottom: 8, display: "block" }}>Fee types * <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 400, textTransform: "none" }}>auto-filled from fee structure</span></label>
+                    <label className="settings-label" style={{ marginBottom: 8, display: "block" }}>
+                      Fee types * <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 400, textTransform: "none" }}>auto-filled from fee structure</span>
+                    </label>
                     <FeeTypeSelector feeTypes={feeTypes} selectedIds={form.selectedFeeTypes} onToggle={handleToggleFeeType} className={form.cls} feeMatrix={{ [form.cls]: localFees }} onFeeChange={handleFeeChange} />
-                    {errors.fees && <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 6 }}>{errors.fees}</div>}
+                    {errors.fees && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 6 }}>{errors.fees}</div>}
                   </div>
                   {selectedOthers && (
                     <div className="field-group" style={{ background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 9, padding: "12px 14px" }}>
                       <label className="settings-label">Specify "Others" fee description *</label>
-                      <input style={inp} value={form.othersLabel} onChange={setFv("othersLabel")} placeholder="e.g. Exam registration…" />
-                      {errors.others && <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 4 }}>{errors.others}</div>}
+                      <input style={inp} value={form.othersLabel} onChange={setFv("othersLabel")} placeholder="e.g. Exam registration, Uniform…" />
+                      {errors.others && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.others}</div>}
                     </div>
                   )}
                   {form.selectedFeeTypes.length > 0 && (
@@ -438,7 +526,7 @@ function AddStudentModal({ onClose }) {
                         <div style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 2 }}>Total fee due</div>
                         <div style={{ fontSize: 20, fontFamily: "'DM Serif Display',serif", color: "var(--green)", lineHeight: 1 }}>KES {totalDue.toLocaleString()}</div>
                       </div>
-                      <div style={{ fontSize: 11, color: "var(--text3)" }}>{form.selectedFeeTypes.length} fee type{form.selectedFeeTypes.length !== 1 ? "s" : ""}</div>
+                      <div style={{ fontSize: 11, color: "var(--text3)", textAlign: "right" }}>{form.selectedFeeTypes.length} fee type{form.selectedFeeTypes.length !== 1 ? "s" : ""}</div>
                     </div>
                   )}
                   <div className="field-group">
@@ -447,10 +535,10 @@ function AddStudentModal({ onClose }) {
                       <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "var(--text3)", pointerEvents: "none" }}>KES</span>
                       <input type="number" min="0" max={totalDue} style={{ ...inp, paddingLeft: 44 }} value={form.paidAmount} onChange={setFv("paidAmount")} placeholder="0" />
                     </div>
-                    {errors.paid && <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 4 }}>{errors.paid}</div>}
+                    {errors.paid && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.paid}</div>}
                     {totalDue > 0 && (
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColors[status] }} />
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColors[status], flexShrink: 0 }} />
                         <span style={{ fontSize: 12, color: statusColors[status], fontWeight: 500 }}>{statusLabels[status]}</span>
                         {balance > 0 && <span style={{ fontSize: 12, color: "var(--text3)" }}>· KES {balance.toLocaleString()} balance</span>}
                       </div>
@@ -555,24 +643,23 @@ export default function Students() {
   const { openSidebar } = useOutletContext();
   const { classes }     = useFeeStructure();
 
-  const students        = useAppStore(s => s.students);
-  const studentsLoaded  = useAppStore(s => s.studentsLoaded);
+  const students       = useAppStore(s => s.students);
+  const studentsLoaded = useAppStore(s => s.studentsLoaded);
 
-  const [showModal,  setShowModal]  = useState(false);
-  const [profileId,  setProfileId]  = useState(null);
-  const [editTarget, setEditTarget] = useState(null); // student object to edit
-  const [search,     setSearch]     = useState("");
+  const [showModal,    setShowModal]    = useState(false);
+  const [profileId,    setProfileId]    = useState(null);
+  const [editTarget,   setEditTarget]   = useState(null);
+  const [search,       setSearch]       = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterClass,  setFilterClass]  = useState("all");
-  const [mobileView, setMobileView] = useState(window.innerWidth < 700);
-  const [toast, setToast]           = useState(null);
+  const [mobileView,   setMobileView]   = useState(window.innerWidth < 700);
+  const [toast,        setToast]        = useState(null);
 
-  // resize listener only — no data fetch
-  useState(() => {
+  useEffect(() => {
     const onResize = () => setMobileView(window.innerWidth < 700);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  });
+  }, []);
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
 
@@ -592,8 +679,8 @@ export default function Students() {
 
   const allClasses = useMemo(() => [...new Set([...classes, ...students.map(s => s.cls)])].filter(Boolean).sort(), [students, classes]);
 
-  const openProfile = (s) => setProfileId(s.id);
-  const openEdit    = (s) => { setProfileId(null); setEditTarget(s); };
+  const openProfile = s => setProfileId(s.id);
+  const openEdit    = s => { setProfileId(null); setEditTarget(s); };
 
   return (
     <>
