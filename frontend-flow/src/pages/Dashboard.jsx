@@ -1,75 +1,33 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import { useFeeStructure } from "../hooks/useFeeStructure";
+import useAppStore from "../store/useAppStore";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
-const fmt = (n) => (typeof n === "number" ? `KES ${Number(n).toLocaleString()}` : n || "KES 0");
+const fmt = n => (typeof n === "number" ? `KES ${Number(n).toLocaleString()}` : n || "KES 0");
+function weeksBetween(s, e) { return Math.max(1, Math.round((new Date(e) - new Date(s)) / (7 * 24 * 60 * 60 * 1000))); }
+function currentWeek(s)     { return Math.max(1, Math.ceil((Date.now() - new Date(s)) / (7 * 24 * 60 * 60 * 1000))); }
+function pct(a, b)           { return b > 0 ? Math.min(100, Math.round((a / b) * 100)) : 0; }
 
-function weeksBetween(start, end) {
-  return Math.max(1, Math.round((new Date(end) - new Date(start)) / (7 * 24 * 60 * 60 * 1000)));
-}
-function currentWeek(start) {
-  return Math.max(1, Math.ceil((Date.now() - new Date(start)) / (7 * 24 * 60 * 60 * 1000)));
-}
-function pct(a, b) { return b > 0 ? Math.min(100, Math.round((a / b) * 100)) : 0; }
-
-// ─── MVP-style Stat Card ──────────────────────────────────────────────────────
+// ─── Stat Card ────────────────────────────────────────────────────────────────
 function StatCard({ item, index }) {
-  const barColor =
-    item.progressClass === "bad"  ? "var(--red)" :
-    item.progressClass === "warn" ? "var(--amber)" : "var(--green)";
-
+  const barColor = item.progressClass === "bad" ? "var(--red)" : item.progressClass === "warn" ? "var(--amber)" : "var(--green)";
   return (
-    <div
-      style={{
-        background: "var(--surface)", border: "1px solid var(--border)",
-        borderRadius: 14, padding: "20px 20px 16px",
-        transition: "border-color .18s, box-shadow .18s", cursor: "default",
-        animation: "fadeUp .3s ease both", animationDelay: `${index * 0.06}s`,
-      }}
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, padding: "20px 20px 16px", transition: "border-color .18s, box-shadow .18s", animation: "fadeUp .3s ease both", animationDelay: `${index * 0.06}s` }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--border2)"; e.currentTarget.style.boxShadow = "var(--shadow)"; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "none"; }}
-    >
-      {/* Icon + badge row */}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)";  e.currentTarget.style.boxShadow = "none"; }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <div style={{
-          width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-          background: item.iconBg, border: `1px solid ${item.iconBorder}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <svg width="16" height="16" fill="none" viewBox="0 0 24 24"
-            stroke={item.iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d={item.iconPath} />
-          </svg>
+        <div style={{ width: 34, height: 34, borderRadius: 9, background: item.iconBg, border: `1px solid ${item.iconBorder}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke={item.iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={item.iconPath}/></svg>
         </div>
-        {item.badge && (
-          <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 20, background: item.badgeBg, color: item.badgeColor }}>
-            {item.badge}
-          </span>
-        )}
+        {item.badge && <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 20, background: item.badgeBg, color: item.badgeColor }}>{item.badge}</span>}
       </div>
-
-      {/* Value */}
-      <div style={{
-        fontSize: 28, fontWeight: 700, letterSpacing: "-1.2px", lineHeight: 1,
-        marginBottom: 5, fontVariantNumeric: "tabular-nums",
-        color: item.valueColor || "var(--text)",
-      }}>
-        {item.value}
-      </div>
-
-      {/* Label */}
-      <div style={{ fontSize: 12, color: "var(--text3)", fontWeight: 500, textTransform: "uppercase", letterSpacing: ".6px" }}>
-        {item.label}
-      </div>
-
-      {/* Sub + progress */}
-      <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
-        {item.sub}
-      </div>
+      <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-1.2px", lineHeight: 1, marginBottom: 5, fontVariantNumeric: "tabular-nums", color: item.valueColor || "var(--text)" }}>{item.value}</div>
+      <div style={{ fontSize: 12, color: "var(--text3)", fontWeight: 500, textTransform: "uppercase", letterSpacing: ".6px" }}>{item.label}</div>
+      <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>{item.sub}</div>
       <div style={{ height: 4, background: "var(--surface3)", borderRadius: 2, overflow: "hidden", marginTop: 8 }}>
         <div style={{ width: `${item.progress || 0}%`, height: "100%", borderRadius: 2, background: barColor, transition: "width .4s ease" }} />
       </div>
@@ -77,13 +35,9 @@ function StatCard({ item, index }) {
   );
 }
 
-// ─── Skeleton placeholder while stats load ────────────────────────────────────
 function StatSkeleton({ index }) {
   return (
-    <div style={{
-      background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14,
-      padding: "20px", animation: "fadeUp .3s ease both", animationDelay: `${index * 0.06}s`,
-    }}>
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, padding: 20, animation: "fadeUp .3s ease both", animationDelay: `${index * 0.06}s` }}>
       <div style={{ width: 34, height: 34, borderRadius: 9, background: "var(--surface2)", marginBottom: 14 }} />
       <div style={{ width: "65%", height: 26, borderRadius: 6, background: "var(--surface2)", marginBottom: 8 }} />
       <div style={{ width: "45%", height: 11, borderRadius: 4, background: "var(--surface2)", marginBottom: 14 }} />
@@ -92,10 +46,11 @@ function StatSkeleton({ index }) {
   );
 }
 
-// ─── New Term Modal ────────────────────────────────────────────────────────────
+// ─── New Term Modal — 4 steps including fee update ────────────────────────────
 function NewTermModal({ onClose, onCreated, existingTerm }) {
   const { token } = useAuth();
   const { classes, feeTypes, addClass, removeClass, addFeeType, removeFeeType, setFee, getFee } = useFeeStructure();
+  const students = useAppStore(s => s.students);
 
   const [step, setStep]     = useState(1);
   const [form, setForm]     = useState({ name: "", startDate: "", endDate: "" });
@@ -104,6 +59,18 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
   const [newClass, setNewClass]     = useState("");
   const [newFeeType, setNewFeeType] = useState("");
 
+  // Step 4: per-class fee overrides for new term
+  // Pre-populated from current fee structure, editable
+  const uniqueClasses = [...new Set([...classes, ...students.map(s => s.cls)])].filter(Boolean).sort();
+  const [feeOverrides, setFeeOverrides] = useState(() => {
+    const init = {};
+    uniqueClasses.forEach(cls => {
+      const total = feeTypes.reduce((s, ft) => s + getFee(cls, ft.id), 0);
+      if (total > 0) init[cls] = total;
+    });
+    return init;
+  });
+
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const handleSubmit = async () => {
@@ -111,18 +78,23 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
     if (new Date(form.endDate) <= new Date(form.startDate)) { setError("End date must be after start date."); return; }
     setSaving(true); setError("");
     try {
+      // Only send overrides where value is set and > 0
+      const feeUpdates = {};
+      Object.entries(feeOverrides).forEach(([cls, fee]) => { if (fee > 0) feeUpdates[cls] = fee; });
+
       const res = await axios.post(`${API}/api/terms`,
-        { name: form.name.trim(), startDate: form.startDate, endDate: form.endDate },
+        { name: form.name.trim(), startDate: form.startDate, endDate: form.endDate, feeUpdates },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      onCreated(res.data);
+      onCreated(res.data, feeUpdates);
       onClose();
     } catch (err) {
       setError(err.response?.data?.message || "Failed to create term.");
     } finally { setSaving(false); }
   };
 
-  const STEPS = ["Term Info", "Classes", "Fee Structure"];
+  const STEPS = ["Term Info", "Classes", "Fee Structure", "Apply Fees"];
+
   const inp = { width: "100%", padding: "9px 12px", background: "#212f48", border: "1px solid #1e2d47", borderRadius: 8, color: "#e8edf5", fontSize: 13.5, fontFamily: "'DM Sans',sans-serif", outline: "none", boxSizing: "border-box" };
   const lbl = { fontSize: 11.5, fontWeight: 600, color: "#8a9dbf", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6, display: "block" };
   const addBtn = { padding: "7px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: "rgba(34,211,164,0.1)", border: "1px solid rgba(34,211,164,0.25)", color: "#22d3a4", cursor: "pointer", fontFamily: "'DM Sans',sans-serif", whiteSpace: "nowrap" };
@@ -130,31 +102,36 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
   return (
     <>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(3px)" }} />
-      <div style={{ position: "fixed", top: "50%", left: "50%", zIndex: 50, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 560, background: "#111827", border: "1px solid #1e2d47", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", overflow: "hidden", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", top: "50%", left: "50%", zIndex: 50, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 580, background: "#111827", border: "1px solid #1e2d47", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", overflow: "hidden", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
 
+        {/* Header */}
         <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #1e2d47", display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 600, color: "#e8edf5", fontFamily: "'DM Serif Display',serif" }}>{existingTerm ? "Start new term" : "Create your first term"}</div>
-            <div style={{ fontSize: 12, color: "#4a5f80", marginTop: 3 }}>Configure term details, classes, and fee structure</div>
+            <div style={{ fontSize: 12, color: "#4a5f80", marginTop: 3 }}>Set dates, classes, fees — then apply to all students</div>
           </div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: "transparent", border: "1px solid #1e2d47", color: "#8a9dbf", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
         </div>
 
+        {/* Step tabs */}
         <div style={{ display: "flex", borderBottom: "1px solid #1e2d47", flexShrink: 0 }}>
           {STEPS.map((s, i) => (
-            <div key={i} onClick={() => i + 1 < step && setStep(i + 1)} style={{ flex: 1, textAlign: "center", padding: "11px 8px", fontSize: 12, fontWeight: 500, color: step === i + 1 ? "#22d3a4" : "#4a5f80", borderBottom: `2px solid ${step === i + 1 ? "#22d3a4" : "transparent"}`, cursor: i + 1 < step ? "pointer" : "default", transition: "all .15s" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: "50%", fontSize: 10, fontWeight: 700, marginRight: 6, background: step === i + 1 ? "#22d3a4" : i + 1 < step ? "rgba(34,211,164,0.2)" : "#1e2d47", color: step === i + 1 ? "#0b1a14" : i + 1 < step ? "#22d3a4" : "#4a5f80" }}>{i + 1}</span>
+            <div key={i} onClick={() => i + 1 < step && setStep(i + 1)} style={{ flex: 1, textAlign: "center", padding: "10px 4px", fontSize: 11.5, fontWeight: 500, color: step === i + 1 ? "#22d3a4" : "#4a5f80", borderBottom: `2px solid ${step === i + 1 ? "#22d3a4" : "transparent"}`, cursor: i + 1 < step ? "pointer" : "default", transition: "all .15s" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 17, height: 17, borderRadius: "50%", fontSize: 9, fontWeight: 700, marginRight: 5, background: step === i + 1 ? "#22d3a4" : i + 1 < step ? "rgba(34,211,164,0.2)" : "#1e2d47", color: step === i + 1 ? "#0b1a14" : i + 1 < step ? "#22d3a4" : "#4a5f80" }}>{i + 1}</span>
               {s}
             </div>
           ))}
         </div>
 
+        {/* Body */}
         <div style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", flex: 1 }}>
+
+          {/* Step 1 */}
           {step === 1 && (
             <>
               {existingTerm && (
                 <div style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.15)", borderRadius: 10, padding: "12px 14px", fontSize: 12.5, color: "#f59e0b" }}>
-                  ⚠ Closing <strong>{existingTerm.name}</strong> will lock its records and reset all student balances to unpaid.
+                  ⚠ Closing <strong>{existingTerm.name}</strong> will reset all student balances to unpaid. You can update fees in Step 4.
                 </div>
               )}
               <div><label style={lbl}>Term name</label><input style={inp} placeholder="e.g. Term 2 — 2025" value={form.name} onChange={set("name")} /></div>
@@ -166,6 +143,7 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
             </>
           )}
 
+          {/* Step 2 */}
           {step === 2 && (
             <>
               <div style={{ fontSize: 13, color: "#8a9dbf" }}>Define the classes in your school.</div>
@@ -185,16 +163,17 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
             </>
           )}
 
+          {/* Step 3 */}
           {step === 3 && (
             <>
-              <div style={{ fontSize: 13, color: "#8a9dbf" }}>Set the fee per class and type.</div>
+              <div style={{ fontSize: 13, color: "#8a9dbf" }}>Set per-class, per-type fee defaults.</div>
               <div style={{ background: "#1a2540", border: "1px solid #1e2d47", borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, fontWeight: 600, color: "#8a9dbf", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>Fee Types</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                   {feeTypes.map(ft => (
                     <div key={ft.id} style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(34,211,164,0.06)", border: "1px solid rgba(34,211,164,0.18)", borderRadius: 20, padding: "4px 10px 4px 12px" }}>
                       <span style={{ fontSize: 12, color: "#22d3a4", fontWeight: 500 }}>{ft.name}</span>
-                      {ft.isCustom && <button onClick={() => removeFeeType(ft.id)} style={{ width: 16, height: 16, borderRadius: "50%", border: "none", background: "rgba(34,211,164,0.15)", color: "#22d3a4", cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>}
+                      {ft.isCustom && <button onClick={() => removeFeeType(ft.id)} style={{ width: 16, height: 16, borderRadius: "50%", border: "none", background: "rgba(34,211,164,0.15)", color: "#22d3a4", cursor: "pointer", fontSize: 11 }}>×</button>}
                     </div>
                   ))}
                 </div>
@@ -203,48 +182,92 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
                   <button style={{ ...addBtn, fontSize: 11.5 }} onClick={() => { addFeeType(newFeeType); setNewFeeType(""); }}>+ Add type</button>
                 </div>
               </div>
-              {classes.length === 0
-                ? <div style={{ fontSize: 13, color: "#4a5f80", textAlign: "center", padding: "20px 0" }}>No classes configured. Go back to Step 2.</div>
-                : (
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                      <thead>
-                        <tr>
-                          <th style={{ textAlign: "left", padding: "8px 10px", color: "#4a5f80", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: "1px solid #1e2d47" }}>Class</th>
-                          {feeTypes.map(ft => <th key={ft.id} style={{ textAlign: "right", padding: "8px 10px", color: "#4a5f80", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: "1px solid #1e2d47", whiteSpace: "nowrap" }}>{ft.name}</th>)}
-                          <th style={{ textAlign: "right", padding: "8px 10px", color: "#22d3a4", fontWeight: 700, fontSize: 11, textTransform: "uppercase", borderBottom: "1px solid #1e2d47" }}>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {classes.map(cls => {
-                          const total = feeTypes.reduce((sum, ft) => sum + getFee(cls, ft.id), 0);
-                          return (
-                            <tr key={cls}>
-                              <td style={{ padding: "8px 10px", color: "#e8edf5", fontWeight: 500, borderBottom: "1px solid rgba(30,45,71,0.5)", whiteSpace: "nowrap" }}>{cls}</td>
-                              {feeTypes.map(ft => (
-                                <td key={ft.id} style={{ padding: "4px 6px", borderBottom: "1px solid rgba(30,45,71,0.5)" }}>
-                                  <input type="number" min="0" value={getFee(cls, ft.id) || ""} onChange={e => setFee(cls, ft.id, e.target.value)} placeholder="0"
-                                    style={{ width: 90, padding: "6px 8px", textAlign: "right", background: "#212f48", border: "1px solid #1e2d47", borderRadius: 6, color: "#e8edf5", fontSize: 12.5, fontFamily: "'DM Sans',sans-serif", outline: "none" }} />
-                                </td>
-                              ))}
-                              <td style={{ padding: "8px 10px", textAlign: "right", color: "#22d3a4", fontWeight: 600, borderBottom: "1px solid rgba(30,45,71,0.5)", whiteSpace: "nowrap" }}>{total > 0 ? `KES ${total.toLocaleString()}` : "—"}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              }
+              {classes.length === 0 ? <div style={{ fontSize: 13, color: "#4a5f80", textAlign: "center" }}>No classes yet — go back to Step 2.</div> : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead><tr>
+                      <th style={{ textAlign: "left", padding: "8px 10px", color: "#4a5f80", fontWeight: 600, fontSize: 11, textTransform: "uppercase", borderBottom: "1px solid #1e2d47" }}>Class</th>
+                      {feeTypes.map(ft => <th key={ft.id} style={{ textAlign: "right", padding: "8px 10px", color: "#4a5f80", fontWeight: 600, fontSize: 11, textTransform: "uppercase", borderBottom: "1px solid #1e2d47", whiteSpace: "nowrap" }}>{ft.name}</th>)}
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: "#22d3a4", fontWeight: 700, fontSize: 11, textTransform: "uppercase", borderBottom: "1px solid #1e2d47" }}>Total</th>
+                    </tr></thead>
+                    <tbody>
+                      {classes.map(cls => {
+                        const total = feeTypes.reduce((s, ft) => s + getFee(cls, ft.id), 0);
+                        return (
+                          <tr key={cls}>
+                            <td style={{ padding: "8px 10px", color: "#e8edf5", fontWeight: 500, borderBottom: "1px solid rgba(30,45,71,0.5)", whiteSpace: "nowrap" }}>{cls}</td>
+                            {feeTypes.map(ft => (
+                              <td key={ft.id} style={{ padding: "4px 6px", borderBottom: "1px solid rgba(30,45,71,0.5)" }}>
+                                <input type="number" min="0" value={getFee(cls, ft.id) || ""} onChange={e => setFee(cls, ft.id, e.target.value)} placeholder="0"
+                                  style={{ width: 90, padding: "6px 8px", textAlign: "right", background: "#212f48", border: "1px solid #1e2d47", borderRadius: 6, color: "#e8edf5", fontSize: 12.5, fontFamily: "'DM Sans',sans-serif", outline: "none" }} />
+                              </td>
+                            ))}
+                            <td style={{ padding: "8px 10px", textAlign: "right", color: "#22d3a4", fontWeight: 600, borderBottom: "1px solid rgba(30,45,71,0.5)", whiteSpace: "nowrap" }}>
+                              {total > 0 ? `KES ${total.toLocaleString()}` : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Step 4 — Apply fees to existing students */}
+          {step === 4 && (
+            <>
+              <div style={{ fontSize: 13, color: "#8a9dbf" }}>
+                Set the fee each class pays this term. This will update all existing students in that class.
+                Leave a class blank to keep its current fee.
+              </div>
+
+              {uniqueClasses.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#4a5f80", textAlign: "center", padding: "20px 0" }}>No students enrolled yet — this will apply when you add students.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {uniqueClasses.map(cls => {
+                    const currentFee = students.filter(s => s.cls === cls)[0]?.fee || 0;
+                    const count      = students.filter(s => s.cls === cls).length;
+                    return (
+                      <div key={cls} style={{ display: "flex", alignItems: "center", gap: 12, background: "#1a2540", border: "1px solid #1e2d47", borderRadius: 9, padding: "11px 14px" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13.5, color: "#e8edf5", fontWeight: 500 }}>{cls}</div>
+                          <div style={{ fontSize: 11.5, color: "#4a5f80", marginTop: 2 }}>
+                            {count} student{count !== 1 ? "s" : ""} · current: KES {Number(currentFee).toLocaleString()}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 11.5, color: "#4a5f80" }}>KES</span>
+                          <input
+                            type="number" min="0"
+                            value={feeOverrides[cls] || ""}
+                            onChange={e => setFeeOverrides(prev => ({ ...prev, [cls]: Number(e.target.value) || 0 }))}
+                            placeholder={currentFee || "keep current"}
+                            style={{ width: 110, padding: "7px 10px", textAlign: "right", background: "#212f48", border: "1px solid #1e2d47", borderRadius: 7, color: "#e8edf5", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div style={{ background: "rgba(34,211,164,0.04)", border: "1px solid rgba(34,211,164,0.15)", borderRadius: 9, padding: "11px 14px", fontSize: 12.5, color: "#8a9dbf" }}>
+                💡 Only classes with a new fee entered will be updated. Classes left blank keep their existing fee.
+              </div>
+              {error && <div style={{ fontSize: 12, color: "#f87171", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 8, padding: "10px 12px" }}>✕ {error}</div>}
             </>
           )}
         </div>
 
+        {/* Footer */}
         <div style={{ padding: "14px 24px", borderTop: "1px solid #1e2d47", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <button onClick={() => step > 1 ? setStep(s => s - 1) : onClose()} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid #1e2d47", color: "#8a9dbf", cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
             {step > 1 ? "← Back" : "Cancel"}
           </button>
-          {step < 3
+          {step < 4
             ? <button onClick={() => {
                 if (step === 1) {
                   if (!form.name.trim() || !form.startDate || !form.endDate) { setError("All fields are required."); return; }
@@ -265,24 +288,24 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
 }
 
 // ─── Past Terms Panel ──────────────────────────────────────────────────────────
-function PastTermsPanel({ terms, onClose }) {
+function PastTermsPanel({ onClose }) {
   const { token } = useAuth();
+  const allTerms  = useAppStore(s => s.terms);
   const [downloading, setDownloading] = useState(null);
 
   const download = async (term, format) => {
     setDownloading(`${term.id}-${format}`);
     try {
       const res = await axios.get(`${API}/api/terms/${term.id}/export?format=${format}`, { headers: { Authorization: `Bearer ${token}` }, responseType: "blob" });
-      const ext = format === "excel" ? "xlsx" : "pdf";
       const url = URL.createObjectURL(res.data);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${term.name.replace(/\s+/g, "_")}.${ext}`; a.click();
+      const a   = document.createElement("a");
+      a.href = url; a.download = `${term.name.replace(/\s+/g, "_")}.${format === "excel" ? "xlsx" : "pdf"}`; a.click();
       URL.revokeObjectURL(url);
-    } catch { alert("Export failed. Please try again."); }
+    } catch { alert("Export failed."); }
     finally { setDownloading(null); }
   };
 
-  const closed = terms.filter(t => t.status === "closed");
+  const closed = allTerms.filter(t => t.status === "closed");
 
   return (
     <>
@@ -322,62 +345,34 @@ function PastTermsPanel({ terms, onClose }) {
 
 // ─── Dashboard Page ────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { token } = useAuth();
-  const navigate  = useNavigate();
 
-  const [activeTerm,     setActiveTerm]     = useState(null);
-  const [allTerms,       setAllTerms]       = useState([]);
-  const [stats,          setStats]          = useState(null);
-  const [recentPayments, setRecentPayments] = useState([]);
-  const [topUnpaid,      setTopUnpaid]      = useState([]);
-  const [loading,        setLoading]        = useState(true);
-  const [showNewTerm,    setShowNewTerm]    = useState(false);
-  const [showPastTerms,  setShowPastTerms]  = useState(false);
+  const activeTerm     = useAppStore(s => s.activeTerm);
+  const stats          = useAppStore(s => s.stats);
+  const statsLoaded    = useAppStore(s => s.statsLoaded);
+  const recentPayments = useAppStore(s => s.recentPayments);
+  const topUnpaid      = useAppStore(s => s.topUnpaid);
+  const setNewTerm     = useAppStore(s => s.setNewTerm);
+  const refreshStats   = useAppStore(s => s.refreshStats);
+  const updateStudent  = useAppStore(s => s.updateStudent);
+  const students       = useAppStore(s => s.students);
 
-  const fetchStats = (headers) => {
-    axios.get(`${API}/api/stats`, { headers })
-      .then(r => {
-        setStats(r.data || null);
-        setRecentPayments(r.data?.recentPayments || []);
-        setTopUnpaid(r.data?.topUnpaid || []);
-      })
-      .catch(console.error);
+  const [showNewTerm,   setShowNewTerm]   = useState(false);
+  const [showPastTerms, setShowPastTerms] = useState(false);
+
+  const handleTermCreated = (newTerm, feeUpdates) => {
+    // Update store locally — students reset to paid=0, fees updated per class
+    setNewTerm(newTerm);
+    // Apply fee updates to students in the store
+    if (feeUpdates) {
+      students.forEach(s => {
+        if (feeUpdates[s.cls]) updateStudent({ ...s, paid: 0, fee: feeUpdates[s.cls], daysOverdue: 0 });
+        else updateStudent({ ...s, paid: 0, daysOverdue: 0 });
+      });
+    }
+    refreshStats(token);
   };
-
-  useEffect(() => {
-    const headers = { Authorization: `Bearer ${token}` };
-
-    // fetch terms first — this controls what we render
-    axios.get(`${API}/api/terms`, { headers })
-      .then(r => {
-        const terms = r.data;
-        setAllTerms(terms);
-        setActiveTerm(terms.find(t => t.status === "active") || null);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-
-    // fetch stats independently — failure here won't hide the term
-    fetchStats(headers);
-  }, [token]);
-
-  const handleTermCreated = (newTerm) => {
-    setAllTerms(prev => [...prev.map(t => ({ ...t, status: "closed" })), newTerm]);
-    setActiveTerm(newTerm);
-    setStats(null);
-    setRecentPayments([]);
-    setTopUnpaid([]);
-    fetchStats({ Authorization: `Bearer ${token}` });
-  };
-
-  if (loading) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh" }}>
-        <div style={{ width: 24, height: 24, borderRadius: "50%", border: "2px solid #1e2d47", borderTop: "2px solid #22d3a4", animation: "spin .8s linear infinite" }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-    );
-  }
 
   if (!activeTerm) {
     return (
@@ -386,9 +381,7 @@ export default function Dashboard() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 20 }}>
           <div style={{ fontSize: 48 }}>🏫</div>
           <div style={{ fontSize: 20, fontFamily: "'DM Serif Display',serif", color: "var(--text)" }}>Welcome to FeeFlow</div>
-          <div style={{ fontSize: 14, color: "var(--text3)", textAlign: "center", maxWidth: 340 }}>
-            Create your first term to start tracking student fees, classes, and payments.
-          </div>
+          <div style={{ fontSize: 14, color: "var(--text3)", textAlign: "center", maxWidth: 340 }}>Create your first term to start tracking student fees, classes, and payments.</div>
           <button className="btn btn-primary" onClick={() => setShowNewTerm(true)}>Create First Term →</button>
         </div>
         {showNewTerm && <NewTermModal onClose={() => setShowNewTerm(false)} onCreated={handleTermCreated} existingTerm={null} />}
@@ -403,7 +396,6 @@ export default function Dashboard() {
 
   return (
     <div className="content">
-      {/* Topbar */}
       <div className="topbar">
         <div>
           <div className="topbar-title">Dashboard</div>
@@ -415,7 +407,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Term progress banner */}
+      {/* Term banner */}
       <div style={{ background: "linear-gradient(135deg,var(--green-bg),var(--blue-bg))", border: "1px solid var(--green-border)", borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div className="pulse-dot" />
@@ -455,7 +447,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KPI Stats — 4 cards */}
+      {/* 4 stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 28 }} className="stats-grid-r">
         {stats?.items?.length > 0
           ? stats.items.map((item, i) => <StatCard key={i} item={item} index={i} />)
@@ -465,18 +457,14 @@ export default function Dashboard() {
 
       {/* Two col */}
       <div className="two-col">
-        {/* Recent payments feed */}
         <div className="card">
           <div className="card-head">
-            <div>
-              <div className="card-title">Recent Payments</div>
-              <div className="card-sub">Latest recorded across all students</div>
-            </div>
+            <div><div className="card-title">Recent Payments</div><div className="card-sub">Latest recorded</div></div>
             <button className="btn btn-outline btn-sm" onClick={() => navigate("/payments")}>See all</button>
           </div>
           <div className="card-body-flush">
             {recentPayments.length === 0
-              ? <div style={{ padding: "36px 20px", textAlign: "center" }}><div style={{ fontSize: 28, marginBottom: 10 }}>💳</div><div style={{ fontSize: 13, color: "var(--text3)" }}>No payments recorded yet this term.</div></div>
+              ? <div style={{ padding: "36px 20px", textAlign: "center" }}><div style={{ fontSize: 28, marginBottom: 10 }}>💳</div><div style={{ fontSize: 13, color: "var(--text3)" }}>No payments recorded yet.</div></div>
               : recentPayments.map((p, i) => (
                 <div key={p.id || i} className="feed-item">
                   <div className="feed-avatar">{p.initials}</div>
@@ -495,35 +483,23 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Top unpaid */}
         <div className="card">
-          <div className="card-head">
-            <div>
-              <div className="card-title">Top Unpaid</div>
-              <div className="card-sub">Highest outstanding balances</div>
-            </div>
-          </div>
+          <div className="card-head"><div><div className="card-title">Top Unpaid</div><div className="card-sub">Highest outstanding balances</div></div></div>
           {topUnpaid.length === 0
             ? <div style={{ padding: "36px 20px", textAlign: "center" }}><div style={{ fontSize: 28, marginBottom: 10 }}>🎉</div><div style={{ fontSize: 13, color: "var(--text3)" }}>All students are paid up!</div></div>
             : topUnpaid.map((u, i) => (
               <div key={i} className="unpaid-item" onClick={() => navigate("/students")}>
                 <div className="unpaid-rank">{u.rank}</div>
-                <div className="unpaid-info">
-                  <div className="unpaid-name">{u.name}</div>
-                  <div className="unpaid-class">{u.cls}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div className="unpaid-bal">{u.bal}</div>
-                  <span className="unpaid-days">{u.days}</span>
-                </div>
+                <div className="unpaid-info"><div className="unpaid-name">{u.name}</div><div className="unpaid-class">{u.cls}</div></div>
+                <div style={{ textAlign: "right" }}><div className="unpaid-bal">{u.bal}</div><span className="unpaid-days">{u.days}</span></div>
               </div>
             ))
           }
         </div>
       </div>
 
-      {showNewTerm    && <NewTermModal    onClose={() => setShowNewTerm(false)}    onCreated={handleTermCreated} existingTerm={activeTerm} />}
-      {showPastTerms  && <PastTermsPanel  terms={allTerms}                         onClose={() => setShowPastTerms(false)} />}
+      {showNewTerm   && <NewTermModal   onClose={() => setShowNewTerm(false)}   onCreated={handleTermCreated} existingTerm={activeTerm} />}
+      {showPastTerms && <PastTermsPanel onClose={() => setShowPastTerms(false)} />}
 
       <style>{`
         @keyframes pulseAnim{0%,100%{box-shadow:0 0 0 3px var(--green-bg)}50%{box-shadow:0 0 0 7px transparent}}

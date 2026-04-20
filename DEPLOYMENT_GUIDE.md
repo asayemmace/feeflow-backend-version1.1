@@ -74,4 +74,5 @@ git push origin main
 or
 git push origin main --force
 or
+function ship { git add .; git commit -m "update"; git push origin main }
 ship

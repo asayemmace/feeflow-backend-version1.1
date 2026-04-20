@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import useAppStore from '../store/useAppStore';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -11,21 +12,22 @@ const PLAN_META = {
   max:  { label: 'Max',   color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.25)' },
 };
 
-// ─── User Settings Modal ────────────────────────────────────────────────────────
+// ─── User Settings Modal ───────────────────────────────────────────────────────
 function UserSettingsModal({ onClose }) {
   const { user, plan, updateUser, logout, theme, toggleTheme } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab]       = useState('profile');
-  const [saving, setSaving] = useState(false);
+  const resetStore = useAppStore(s => s.reset);
+  const [tab, setTab]         = useState('profile');
+  const [saving, setSaving]   = useState(false);
   const [success, setSuccess] = useState('');
-  const [error, setError]   = useState('');
+  const [error, setError]     = useState('');
 
-  const [profile, setProfile]     = useState({ name: user?.name || '', phone: user?.phone || '', schoolName: user?.schoolName || '' });
+  const [profile,   setProfile]   = useState({ name: user?.name || '', phone: user?.phone || '', schoolName: user?.schoolName || '' });
   const [emailForm, setEmailForm] = useState({ email: user?.email || '', password: '' });
-  const [pwForm, setPwForm]       = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [pwForm,    setPwForm]    = useState({ currentPassword: '', newPassword: '', confirm: '' });
 
-  const showSuccess = (msg) => { setSuccess(msg); setError(''); setTimeout(() => setSuccess(''), 3000); };
-  const showError   = (msg) => { setError(msg); setSuccess(''); };
+  const showSuccess = msg => { setSuccess(msg); setError(''); setTimeout(() => setSuccess(''), 3000); };
+  const showError   = msg => { setError(msg); setSuccess(''); };
 
   const saveProfile = async () => {
     setSaving(true);
@@ -44,7 +46,7 @@ function UserSettingsModal({ onClose }) {
       const res = await axios.patch(`${API}/api/auth/email`, emailForm);
       updateUser(res.data);
       showSuccess('Email updated. Please log in again.');
-      setTimeout(() => { logout(); navigate('/login'); }, 2000);
+      setTimeout(() => { logout(); resetStore(); navigate('/login'); }, 2000);
     } catch (e) { showError(e.response?.data?.message || 'Failed to update'); }
     finally { setSaving(false); }
   };
@@ -64,7 +66,6 @@ function UserSettingsModal({ onClose }) {
   const pm  = PLAN_META[plan] || PLAN_META.free;
   const inp = 'settings-input';
   const lbl = 'settings-label';
-
   const tabs = [
     { id: 'profile',  label: 'Profile' },
     { id: 'email',    label: 'Email' },
@@ -77,7 +78,6 @@ function UserSettingsModal({ onClose }) {
     <>
       <div className="modal-backdrop" onClick={onClose} />
       <div className="settings-modal">
-        {/* Header */}
         <div className="settings-header">
           <div>
             <div className="settings-title">Account Settings</div>
@@ -87,24 +87,18 @@ function UserSettingsModal({ onClose }) {
         </div>
 
         <div className="settings-body">
-          {/* Tabs */}
           <div className="settings-tabs">
             {tabs.map(t => (
-              <button
-                key={t.id}
-                className={`settings-tab${tab === t.id ? ' active' : ''}`}
-                onClick={() => { setTab(t.id); setSuccess(''); setError(''); }}
-              >
+              <button key={t.id} className={`settings-tab${tab === t.id ? ' active' : ''}`}
+                onClick={() => { setTab(t.id); setSuccess(''); setError(''); }}>
                 {t.label}
               </button>
             ))}
           </div>
 
-          {/* Feedback */}
           {success && <div className="settings-success">✓ {success}</div>}
           {error   && <div className="settings-error">✕ {error}</div>}
 
-          {/* Profile tab */}
           {tab === 'profile' && (
             <div className="settings-fields">
               <div className="field-group">
@@ -125,7 +119,6 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
-          {/* Email tab */}
           {tab === 'email' && (
             <div className="settings-fields">
               <div className="settings-info-box">Current email: <strong>{user?.email}</strong></div>
@@ -143,7 +136,6 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
-          {/* Password tab */}
           {tab === 'password' && (
             <div className="settings-fields">
               <div className="field-group">
@@ -164,13 +156,11 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
-          {/* Plan tab */}
           {tab === 'plan' && (
             <div className="settings-fields">
-              <div className="plan-current-card" style={{ borderColor: pm.border, background: pm.bg }}>
-                <div className="plan-current-label" style={{ color: pm.color }}>Current plan</div>
-                <div className="plan-current-name" style={{ color: pm.color }}>{pm.label}</div>
-                {plan === 'free' && <div className="plan-current-sub">Up to 300 students · No M-Pesa integration</div>}
+              <div className="plan-current">
+                <div className="plan-current-name" style={{ color: pm.color }}>{pm.label} Plan</div>
+                {plan === 'free' && <div className="plan-current-sub">Up to 300 students · Manual payments only</div>}
                 {plan === 'pro'  && <div className="plan-current-sub">Up to 800 students · M-Pesa + WhatsApp invoices</div>}
                 {plan === 'max'  && <div className="plan-current-sub">Unlimited students · Full automation + instant receipts</div>}
               </div>
@@ -179,16 +169,12 @@ function UserSettingsModal({ onClose }) {
                   <div className="plan-upgrade-card" style={{ borderColor: 'rgba(34,211,164,0.25)' }}>
                     <div className="plan-upgrade-name" style={{ color: '#22d3a4' }}>Pro — KES 20,000/mo</div>
                     <div className="plan-upgrade-feat">800 students · M-Pesa STK Push · WhatsApp invoices · Payment reminders</div>
-                    <a href="mailto:yahiawarsame@gmail.com?subject=FeeFlow Pro Upgrade" className="plan-upgrade-btn" style={{ background: '#22d3a4', color: '#0b1a14' }}>
-                      Upgrade to Pro →
-                    </a>
+                    <a href="mailto:yahiawarsame@gmail.com?subject=FeeFlow Pro Upgrade" className="plan-upgrade-btn" style={{ background: '#22d3a4', color: '#0b1a14' }}>Upgrade to Pro →</a>
                   </div>
                   <div className="plan-upgrade-card" style={{ borderColor: 'rgba(245,158,11,0.25)' }}>
                     <div className="plan-upgrade-name" style={{ color: '#f59e0b' }}>Max — Custom pricing</div>
                     <div className="plan-upgrade-feat">Unlimited students · Everything in Pro · Instant receipts · Dedicated support</div>
-                    <a href="mailto:yahiawarsame@gmail.com?subject=FeeFlow Max Upgrade" className="plan-upgrade-btn" style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>
-                      Contact us →
-                    </a>
+                    <a href="mailto:yahiawarsame@gmail.com?subject=FeeFlow Max Upgrade" className="plan-upgrade-btn" style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>Contact us →</a>
                   </div>
                 </div>
               )}
@@ -200,7 +186,6 @@ function UserSettingsModal({ onClose }) {
             </div>
           )}
 
-          {/* Display tab */}
           {tab === 'display' && (
             <div className="settings-fields">
               <div className="field-group">
@@ -218,9 +203,8 @@ function UserSettingsModal({ onClose }) {
           )}
         </div>
 
-        {/* Footer — logout */}
         <div className="settings-footer">
-          <button className="settings-logout-btn" onClick={() => { logout(); navigate('/login'); }}>
+          <button className="settings-logout-btn" onClick={() => { logout(); resetStore(); navigate('/login'); }}>
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
             </svg>
@@ -232,27 +216,29 @@ function UserSettingsModal({ onClose }) {
   );
 }
 
-// ─── App Layout ─────────────────────────────────────────────────────────────────
+// ─── App Layout ────────────────────────────────────────────────────────────────
 export default function AppLayout() {
   const navigate  = useNavigate();
   const location  = useLocation();
-  const { user, plan } = useAuth();
+  const { user, token, plan } = useAuth();
+  const bootstrap = useAppStore(s => s.bootstrap);
+  const loaded    = useAppStore(s => s.termsLoaded);
+
   const [showSettings, setShowSettings] = useState(false);
-  const [sidebarOpen, setSidebarOpen]   = useState(false);
+  const [sidebarOpen,  setSidebarOpen]  = useState(false);
   const pm = PLAN_META[plan] || PLAN_META.free;
 
-  // Close sidebar on route change (mobile)
+  // ── Bootstrap once when the layout mounts (user just logged in / refreshed)
   useEffect(() => {
-    setSidebarOpen(false);
-  }, [location.pathname]);
-
-  // Prevent body scroll when sidebar is open on mobile
-  useEffect(() => {
-    if (sidebarOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+    if (token && !loaded) {
+      bootstrap(token);
     }
+  }, [token, loaded, bootstrap]);
+
+  useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
+
+  useEffect(() => {
+    document.body.style.overflow = sidebarOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [sidebarOpen]);
 
@@ -271,22 +257,25 @@ export default function AppLayout() {
     },
   ];
 
+  // Show a slim loading bar while bootstrapping on first visit
+  if (!loaded) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <div style={{ width: 28, height: 28, borderRadius: "50%", border: "2px solid var(--border)", borderTop: "2px solid var(--green)", animation: "spin .8s linear infinite" }} />
+          <div style={{ fontSize: 13, color: "var(--text3)" }}>Loading FeeFlow…</div>
+        </div>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
   return (
     <div className="app-layout">
-      {/* Mobile sidebar overlay */}
-      <div
-        className={`sidebar-overlay${sidebarOpen ? ' open' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-      />
+      <div className={`sidebar-overlay${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
 
-      {/* Sidebar */}
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
-        <div
-          className="sidebar-logo"
-          onClick={() => navigate('/')}
-          style={{ cursor: 'pointer', userSelect: 'none' }}
-          title="Go to homepage"
-        >
+        <div className="sidebar-logo" onClick={() => navigate('/')} style={{ cursor: 'pointer', userSelect: 'none' }} title="Go to homepage">
           <div className="logo-mark">
             <div className="logo-icon">F</div>
             <div>
@@ -298,18 +287,13 @@ export default function AppLayout() {
 
         <nav className="sidebar-nav">
           {navItems.map(item => (
-            <button
-              key={item.path}
-              className={`nav-item${location.pathname === item.path ? ' active' : ''}`}
-              onClick={() => navigate(item.path)}
-            >
+            <button key={item.path} className={`nav-item${location.pathname === item.path ? ' active' : ''}`} onClick={() => navigate(item.path)}>
               <span className="nav-icon">{item.icon}</span>
               {item.label}
             </button>
           ))}
         </nav>
 
-        {/* User card — opens settings */}
         <div className="sidebar-user">
           <button className="user-card" onClick={() => { setShowSettings(true); setSidebarOpen(false); }}>
             <div className="user-avatar">
@@ -326,9 +310,7 @@ export default function AppLayout() {
         </div>
       </aside>
 
-      {/* Main scroll area */}
       <main className="main-content">
-        {/* Inject hamburger context so pages can show it in topbar */}
         <Outlet context={{ openSidebar: () => setSidebarOpen(true) }} />
       </main>
 
@@ -337,5 +319,4 @@ export default function AppLayout() {
   );
 }
 
-// ─── Hook for pages to access sidebar opener ────────────────────────────────────
 export { useOutletContext } from 'react-router-dom';
