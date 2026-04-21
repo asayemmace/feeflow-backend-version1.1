@@ -22,6 +22,8 @@ model User {
   payments         Payment[]
   terms            Term[]
   unmatchedPayments UnmatchedPayment[]
+  invoices         Invoice[]
+  receipts         Receipt[]
 }
 
 model Student {
@@ -32,6 +34,9 @@ model Student {
   fee         Float     @default(0)
   paid        Float     @default(0)
   phone       String?
+  parentName  String?
+  parentPhone String?
+  parentEmail String?
   daysOverdue Int       @default(0)
   termId      String?
   userId      String
@@ -73,4 +78,49 @@ model UnmatchedPayment {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+}
+
+model Invoice {
+  id           String    @id @default(cuid())
+  userId       String
+  studentId    String
+  studentName  String
+  admNo        String?
+  className    String
+  totalFee     Float
+  paid         Float     @default(0)
+  balance      Float     @default(0)
+  dueDate      DateTime
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  channels     String[]
+  termName     String?
+  note         String?
+  feeBreakdown Json      @default("[]")
+  parentPhone  String?
+  parentName   String?
+  status       String    @default("draft")
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Receipt {
+  id          String   @id @default(cuid())
+  userId      String
+  paymentId   String
+  studentId   String
+  studentName String
+  admNo       String?
+  className   String
+  amount      Float
+  method      String
+  txnRef      String?
+  paidAt      DateTime
+  sentAt      DateTime?
+  channels    String[]
+  type        String   @default("manual")
+  balance     Float    @default(0)
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

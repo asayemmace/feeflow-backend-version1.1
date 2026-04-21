@@ -458,6 +458,13 @@ app.post("/api/payments", requireAuth, async (req, res) => {
     const daysOverdue = newPaid >= student.fee ? 0 : student.daysOverdue;
     await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: parseFloat(amount) }, daysOverdue } });
 
+    // Auto-send receipt if user is on Max plan
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (PLAN_LIMITS[user?.plan]?.receipts) {
+      const updatedStudent = { ...student, paid: newPaid, daysOverdue };
+      autoSendReceipt({ payment, student: updatedStudent, user }).catch(console.error);
+    }
+
     res.status(201).json({
       id: payment.id, name: payment.student?.name,
       initials: (payment.student?.name || "??").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
@@ -546,7 +553,425 @@ app.post("/api/mpesa/callback", async (req, res) => {
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 });
 
-app.get("/health", (_, res) => res.json({ ok: true, version: "2.3", env: process.env.NODE_ENV }));
+// ═══════════════════════════════════════════════════════════════════
+// INVOICES & RECEIPTS
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Helper: format WhatsApp number ────────────────────────────────────────────
+function toWaNumber(phone) {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("254")) return digits;
+  if (digits.startsWith("0"))   return "254" + digits.slice(1);
+  if (digits.startsWith("7") || digits.startsWith("1")) return "254" + digits;
+  return digits;
+}
+
+// ─── Helper: send WhatsApp via Twilio ──────────────────────────────────────────
+// Set env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WA_FROM
+async function sendWhatsApp(to, message) {
+  const sid   = process.env.TWILIO_ACCOUNT_SID;
+  const auth  = process.env.TWILIO_AUTH_TOKEN;
+  const from  = process.env.TWILIO_WA_FROM; // e.g. "whatsapp:+14155238886"
+  if (!sid || !auth || !from) throw new Error("WhatsApp provider not configured");
+  const waTo  = `whatsapp:+${toWaNumber(to)}`;
+  const res   = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + Buffer.from(`${sid}:${auth}`).toString("base64"),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ From: from, To: waTo, Body: message }),
+  });
+  if (!res.ok) throw new Error(`WhatsApp send failed: ${res.status}`);
+  return res.json();
+}
+
+// ─── Helper: send email via SendGrid ───────────────────────────────────────────
+// Set env vars: SENDGRID_API_KEY, EMAIL_FROM
+async function sendEmail(to, subject, html) {
+  const key  = process.env.SENDGRID_API_KEY;
+  const from = process.env.EMAIL_FROM || "noreply@feeflow.app";
+  if (!key) throw new Error("Email provider not configured");
+  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: from, name: "FeeFlow" },
+      subject,
+      content: [{ type: "text/html", value: html }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Email send failed: ${res.status}`);
+}
+
+// ─── Helper: receipt download link ─────────────────────────────────────────────
+function receiptLink(receiptId) {
+  return `${process.env.FRONTEND_URL || "http://localhost:5173"}/receipt/${receiptId}`;
+}
+
+// ─── Helper: invoice message text ──────────────────────────────────────────────
+function buildInvoiceMessage({ schoolName, studentName, className, admNo, totalFee, dueDate, termName, note, feeBreakdown }) {
+  const breakdownText = (feeBreakdown || []).map(fb => `  • ${fb.typeName}: KES ${Number(fb.amount).toLocaleString()}`).join("\n");
+  return [
+    `📋 *FEE INVOICE — ${schoolName}*`,
+    ``,
+    `Dear Parent/Guardian,`,
+    ``,
+    `Please find below the fee invoice for your child:`,
+    ``,
+    `👤 *Student:* ${studentName}`,
+    `🎓 *Class:* ${className}`,
+    `🔖 *Adm No:* ${admNo}`,
+    termName ? `📅 *Term:* ${termName}` : null,
+    ``,
+    `*FEE BREAKDOWN:*`,
+    breakdownText || `  • Tuition Fee: KES ${Number(totalFee).toLocaleString()}`,
+    ``,
+    `💰 *Total Due: KES ${Number(totalFee).toLocaleString()}*`,
+    `📆 *Due Date: ${new Date(dueDate).toLocaleDateString("en-KE", { day: "2-digit", month: "long", year: "numeric" })}*`,
+    note ? `\nℹ️ ${note}` : null,
+    ``,
+    `Kindly ensure payment is made before the due date.`,
+    `Thank you — ${schoolName}`,
+  ].filter(l => l !== null).join("\n");
+}
+
+// ─── Helper: receipt message text ──────────────────────────────────────────────
+function buildReceiptMessage({ schoolName, studentName, className, amount, method, receiptId, txnRef }) {
+  const methodLabel = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash", manual: "Manual" };
+  return [
+    `✅ *PAYMENT RECEIPT — ${schoolName}*`,
+    ``,
+    `Dear Parent/Guardian,`,
+    ``,
+    `We have received a payment for:`,
+    ``,
+    `👤 *Student:* ${studentName}`,
+    `🎓 *Class:* ${className}`,
+    `💳 *Method:* ${methodLabel[method] || method}`,
+    txnRef ? `🔖 *Ref:* ${txnRef}` : null,
+    `💰 *Amount: KES ${Number(amount).toLocaleString()}*`,
+    ``,
+    `📥 Download your receipt:`,
+    receiptLink(receiptId),
+    ``,
+    `Thank you — ${schoolName}`,
+  ].filter(l => l !== null).join("\n");
+}
+
+// ─── Invoice Routes ─────────────────────────────────────────────────────────────
+
+// GET /api/invoices
+app.get("/api/invoices", requireAuth, async (req, res) => {
+  try {
+    const invoices = await prisma.invoice.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(invoices);
+  } catch (e) { res.status(500).json({ message: "Failed to fetch invoices" }); }
+});
+
+// POST /api/invoices
+app.post("/api/invoices", requireAuth, requirePlan("invoices"), async (req, res) => {
+  const { studentIds, dueDate, scheduledFor, channels, note, termName } = req.body;
+  if (!studentIds?.length) return res.status(400).json({ message: "No students selected" });
+  if (!dueDate)            return res.status(400).json({ message: "Due date is required" });
+  if (!channels?.length)   return res.status(400).json({ message: "Select at least one channel" });
+
+  try {
+    const user     = await prisma.user.findUnique({ where: { id: req.userId } });
+    const students = await prisma.student.findMany({ where: { id: { in: studentIds }, userId: req.userId } });
+    const now      = new Date();
+    const sendNow  = !scheduledFor || new Date(scheduledFor) <= now;
+
+    const created = [];
+    for (const student of students) {
+      const recentPayments = await prisma.payment.findMany({ where: { studentId: student.id }, orderBy: { createdAt: "desc" }, take: 1 });
+      const feeBreakdown   = recentPayments[0]?.feeBreakdown || [];
+
+      const invoice = await prisma.invoice.create({
+        data: {
+          userId:       req.userId,
+          studentId:    student.id,
+          studentName:  student.name,
+          admNo:        student.adm,
+          className:    student.cls,
+          totalFee:     student.fee,
+          paid:         student.paid,
+          balance:      Math.max(0, student.fee - student.paid),
+          dueDate:      new Date(dueDate),
+          scheduledFor: scheduledFor ? new Date(scheduledFor) : null,
+          channels,
+          termName:     termName || null,
+          note:         note || null,
+          feeBreakdown,
+          status:       sendNow ? "pending" : "scheduled",
+          parentPhone:  student.parentPhone || null,
+          parentName:   student.parentName  || null,
+        },
+      });
+      created.push(invoice);
+
+      if (sendNow) {
+        const message = buildInvoiceMessage({
+          schoolName:   user.schoolName || "School",
+          studentName:  student.name,
+          className:    student.cls,
+          admNo:        student.adm,
+          totalFee:     student.fee,
+          dueDate,
+          termName,
+          note,
+          feeBreakdown,
+        });
+
+        let allOk = true;
+        if (channels.includes("whatsapp") && student.parentPhone) {
+          try { await sendWhatsApp(student.parentPhone, message); }
+          catch { allOk = false; }
+        }
+        if (channels.includes("email") && (student.parentEmail || student.email)) {
+          const emailTo = student.parentEmail || student.email;
+          try {
+            await sendEmail(emailTo, `Fee Invoice — ${student.name} (${user.schoolName || "School"})`, `<pre style="font-family:sans-serif;white-space:pre-wrap">${message}</pre>`);
+          } catch { allOk = false; }
+        }
+
+        await prisma.invoice.update({ where: { id: invoice.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
+      }
+    }
+
+    res.json({ created: created.length, scheduled: !sendNow });
+  } catch (e) {
+    console.error("Invoice creation error:", e);
+    res.status(500).json({ message: "Failed to create invoices" });
+  }
+});
+
+// POST /api/invoices/:id/resend
+app.post("/api/invoices/:id/resend", requireAuth, requirePlan("invoices"), async (req, res) => {
+  try {
+    const invoice = await prisma.invoice.findFirst({ where: { id: req.params.id, userId: req.userId } });
+    if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+
+    const user    = await prisma.user.findUnique({ where: { id: req.userId } });
+    const student = await prisma.student.findUnique({ where: { id: invoice.studentId } });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const message = buildInvoiceMessage({
+      schoolName:   user.schoolName || "School",
+      studentName:  student.name,
+      className:    student.cls,
+      admNo:        student.adm,
+      totalFee:     invoice.totalFee,
+      dueDate:      invoice.dueDate,
+      termName:     invoice.termName,
+      note:         invoice.note,
+      feeBreakdown: invoice.feeBreakdown || [],
+    });
+
+    let allOk = true;
+    const channels = invoice.channels || [];
+    if (channels.includes("whatsapp") && student.parentPhone) {
+      try { await sendWhatsApp(student.parentPhone, message); } catch { allOk = false; }
+    }
+    await prisma.invoice.update({ where: { id: invoice.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
+    res.json({ ok: allOk });
+  } catch (e) { res.status(500).json({ message: "Resend failed" }); }
+});
+
+// ─── Receipt Routes ─────────────────────────────────────────────────────────────
+
+// GET /api/receipts
+app.get("/api/receipts", requireAuth, async (req, res) => {
+  try {
+    const receipts = await prisma.receipt.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(receipts);
+  } catch (e) { res.status(500).json({ message: "Failed to fetch receipts" }); }
+});
+
+// POST /api/receipts/manual
+app.post("/api/receipts/manual", requireAuth, async (req, res) => {
+  const { paymentId, studentId, channels } = req.body;
+  if (!paymentId) return res.status(400).json({ message: "Payment ID required" });
+
+  try {
+    const payment = await prisma.payment.findFirst({ where: { id: paymentId, userId: req.userId } });
+    if (!payment) return res.status(404).json({ message: "Payment not found" });
+
+    const student = await prisma.student.findUnique({ where: { id: studentId || payment.studentId } });
+    const user    = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const receipt = await prisma.receipt.create({
+      data: {
+        userId:      req.userId,
+        paymentId:   payment.id,
+        studentId:   student.id,
+        studentName: student.name,
+        admNo:       student.adm,
+        className:   student.cls,
+        amount:      payment.amount,
+        method:      payment.method,
+        txnRef:      payment.txnRef || null,
+        paidAt:      payment.createdAt,
+        channels:    channels || ["whatsapp"],
+        type:        "manual",
+        balance:     Math.max(0, student.fee - student.paid),
+        status:      "pending",
+      },
+    });
+
+    const message = buildReceiptMessage({
+      schoolName:  user.schoolName || "School",
+      studentName: student.name,
+      className:   student.cls,
+      amount:      payment.amount,
+      method:      payment.method,
+      receiptId:   receipt.id,
+      txnRef:      payment.txnRef,
+    });
+
+    let allOk = true;
+    const ch  = channels || ["whatsapp"];
+    if (ch.includes("whatsapp") && student.parentPhone) {
+      try { await sendWhatsApp(student.parentPhone, message); }
+      catch (e) { console.error("WhatsApp send failed:", e.message); allOk = false; }
+    }
+    if (ch.includes("email") && (student.parentEmail || student.email)) {
+      try { await sendEmail(student.parentEmail || student.email, `Payment Receipt — ${student.name}`, `<pre style="font-family:sans-serif;white-space:pre-wrap">${message}</pre>`); }
+      catch (e) { console.error("Email send failed:", e.message); allOk = false; }
+    }
+
+    await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
+    res.json({ ok: allOk, receipt });
+  } catch (e) {
+    console.error("Manual receipt error:", e);
+    res.status(500).json({ message: "Failed to send receipt" });
+  }
+});
+
+// POST /api/receipts/:id/resend
+app.post("/api/receipts/:id/resend", requireAuth, async (req, res) => {
+  try {
+    const receipt = await prisma.receipt.findFirst({ where: { id: req.params.id, userId: req.userId } });
+    if (!receipt) return res.status(404).json({ message: "Receipt not found" });
+
+    const student = await prisma.student.findUnique({ where: { id: receipt.studentId } });
+    const user    = await prisma.user.findUnique({ where: { id: req.userId } });
+
+    const message = buildReceiptMessage({
+      schoolName:  user.schoolName || "School",
+      studentName: student.name,
+      className:   student.cls,
+      amount:      receipt.amount,
+      method:      receipt.method,
+      receiptId:   receipt.id,
+      txnRef:      receipt.txnRef,
+    });
+
+    let allOk = true;
+    if ((receipt.channels || []).includes("whatsapp") && student.parentPhone) {
+      try { await sendWhatsApp(student.parentPhone, message); } catch { allOk = false; }
+    }
+    await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
+    res.json({ ok: allOk });
+  } catch (e) { res.status(500).json({ message: "Resend failed" }); }
+});
+
+// ─── Auto-receipt helper (called after POST /api/payments for Max plan) ─────────
+async function autoSendReceipt({ payment, student, user }) {
+  try {
+    const receipt = await prisma.receipt.create({
+      data: {
+        userId:      user.id,
+        paymentId:   payment.id,
+        studentId:   student.id,
+        studentName: student.name,
+        admNo:       student.adm,
+        className:   student.cls,
+        amount:      payment.amount,
+        method:      payment.method,
+        txnRef:      payment.txnRef || null,
+        paidAt:      payment.createdAt,
+        channels:    ["whatsapp"],
+        type:        "auto",
+        balance:     Math.max(0, student.fee - student.paid),
+        status:      "pending",
+      },
+    });
+
+    const message = buildReceiptMessage({
+      schoolName:  user.schoolName || "School",
+      studentName: student.name,
+      className:   student.cls,
+      amount:      payment.amount,
+      method:      payment.method,
+      receiptId:   receipt.id,
+      txnRef:      payment.txnRef,
+    });
+
+    if (student.parentPhone) {
+      await sendWhatsApp(student.parentPhone, message);
+      await prisma.receipt.update({ where: { id: receipt.id }, data: { status: "sent", sentAt: new Date() } });
+    }
+  } catch (e) {
+    console.error("Auto-receipt failed:", e.message);
+  }
+}
+
+// ─── Scheduled invoice processor (runs every 60 seconds) ───────────────────────
+setInterval(async () => {
+  try {
+    const due = await prisma.invoice.findMany({
+      where: {
+        status: "scheduled",
+        scheduledFor: { lte: new Date() },
+      },
+    });
+    for (const invoice of due) {
+      const student = await prisma.student.findUnique({ where: { id: invoice.studentId } });
+      const user    = await prisma.user.findUnique({ where: { id: invoice.userId } });
+      if (!student || !user) continue;
+
+      const message = buildInvoiceMessage({
+        schoolName:   user.schoolName || "School",
+        studentName:  student.name,
+        className:    student.cls,
+        admNo:        student.adm,
+        totalFee:     invoice.totalFee,
+        dueDate:      invoice.dueDate,
+        termName:     invoice.termName,
+        note:         invoice.note,
+        feeBreakdown: invoice.feeBreakdown || [],
+      });
+
+      let allOk = true;
+      const channels = invoice.channels || [];
+      if (channels.includes("whatsapp") && student.parentPhone) {
+        try { await sendWhatsApp(student.parentPhone, message); } catch { allOk = false; }
+      }
+      if (channels.includes("email") && (student.parentEmail || student.email)) {
+        try { await sendEmail(student.parentEmail || student.email, `Fee Invoice — ${student.name}`, `<pre>${message}</pre>`); }
+        catch { allOk = false; }
+      }
+
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { status: allOk ? "sent" : "failed", sentAt: new Date() },
+      });
+    }
+  } catch (e) { console.error("Scheduler error:", e.message); }
+}, 60 * 1000);
+
+// ─── Health & fallbacks ────────────────────────────────────────────────────────
+app.get("/health", (_, res) => res.json({ ok: true, version: "2.4", env: process.env.NODE_ENV }));
 app.use((req, res) => res.status(404).json({ message: "Route not found" }));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ message: "Internal server error" }); });
 
