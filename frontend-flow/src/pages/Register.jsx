@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -13,6 +14,7 @@ const Register = () => {
 
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
+    if (!canSubmit) return;
     setError('');
 
     if (form.password !== form.confirm) return setError('Passwords do not match');
@@ -20,7 +22,7 @@ const Register = () => {
     if (!form.name.trim())             return setError('Please enter your name');
     if (!form.email.trim())            return setError('Please enter your email');
 
-    setLoading(true);
+    flushSync(() => setLoading(true));   // paint spinner BEFORE the network call
     try {
       await register(form.name.trim(), form.email.trim(), form.password, form.schoolName.trim());
       navigate('/dashboard', { replace: true });

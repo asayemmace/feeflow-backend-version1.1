@@ -86,6 +86,8 @@ const useAppStore = create((set, get) => ({
     students: s.students.map(st => st.id === updated.id ? updated : st),
   })),
 
+  removeStudent: (id) => set(s => ({ students: s.students.filter(st => st.id !== id) })),
+
   // ── Payments mutations ────────────────────────────────────────────────────
   addPayment: (payment) => set(s => ({ payments: [payment, ...s.payments] })),
 

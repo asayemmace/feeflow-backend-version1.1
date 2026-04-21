@@ -49,7 +49,7 @@ function EditStudentModal({ student, onClose, token }) {
   const { classes } = useFeeStructure();
   const updateStudent = useAppStore(s => s.updateStudent);
 
-  const [form, setForm] = useState({ name: student.name || "", cls: student.cls || "", phone: student.phone || "", fee: student.fee || "" });
+  const [form, setForm] = useState({ name: student.name || "", cls: student.cls || "", phone: student.phone || "", parentName: student.parentName || "", parentPhone: student.parentPhone || "", fee: student.fee || "" });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -57,12 +57,13 @@ function EditStudentModal({ student, onClose, token }) {
   const handleSave = async () => {
     if (!form.name.trim()) { setError("Name is required."); return; }
     if (!form.cls)          { setError("Select a class."); return; }
+    if (!form.parentPhone.trim()) { setError("Parent phone is required."); return; }
     const fee = parseFloat(form.fee);
     if (isNaN(fee) || fee <= 0) { setError("Enter a valid fee."); return; }
     setSaving(true); setError("");
     try {
       const res = await axios.patch(`${API}/api/students/${student.id}`,
-        { name: form.name.trim(), cls: form.cls, phone: form.phone.trim() || null, fee },
+        { name: form.name.trim(), cls: form.cls, phone: form.phone.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       updateStudent(res.data);
@@ -98,8 +99,18 @@ function EditStudentModal({ student, onClose, token }) {
               </select>
             </div>
             <div className="field-group">
-              <label className="settings-label">Phone</label>
+              <label className="settings-label">Student phone</label>
               <input style={inp} value={form.phone} onChange={setFv("phone")} placeholder="07XX XXX XXX" />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="field-group">
+              <label className="settings-label">Parent / Guardian name</label>
+              <input style={inp} value={form.parentName} onChange={setFv("parentName")} placeholder="e.g. Hassan Farah" />
+            </div>
+            <div className="field-group">
+              <label className="settings-label">Parent phone *</label>
+              <input style={inp} value={form.parentPhone} onChange={setFv("parentPhone")} placeholder="07XX XXX XXX" />
             </div>
           </div>
           <div className="field-group">
@@ -231,6 +242,15 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
                       {data.student.cls} &nbsp;·&nbsp; {data.student.adm}
                       {data.student.phone && <> &nbsp;·&nbsp; {data.student.phone}</>}
                     </div>
+                    {(data.student.parentName || data.student.parentPhone) && (
+                      <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span style={{ color: "var(--text2)" }}>👤 Parent:</span>
+                        {data.student.parentName && <span>{data.student.parentName}</span>}
+                        {data.student.parentPhone && (
+                          <a href={`tel:${data.student.parentPhone}`} style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 500 }}>{data.student.parentPhone}</a>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -385,7 +405,7 @@ function AddStudentModal({ onClose }) {
   const [saving,   setSaving]   = useState(false);
   const [apiError, setApiError] = useState("");
   const [errors,   setErrors]   = useState({});
-  const [form,     setForm]     = useState({ name: "", adm: "", cls: "", phone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
+  const [form,     setForm]     = useState({ name: "", cls: "", phone: "", parentName: "", parentPhone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
   const [localFees, setLocalFees] = useState({});
 
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -424,14 +444,14 @@ function AddStudentModal({ onClose }) {
 
   const validate = () => {
     const e = {};
-    if (!form.name.trim())                          e.name   = "Required";
-    if (!form.adm.trim())                           e.adm    = "Required";
-    if (!form.cls)                                  e.cls    = "Select a class";
-    if (form.selectedFeeTypes.length === 0)         e.fees   = "Select at least one fee type";
-    if (totalDue <= 0)                              e.fees   = "Total fee must be > 0";
-    if (paidNum < 0)                                e.paid   = "Cannot be negative";
-    if (paidNum > totalDue)                         e.paid   = "Exceeds total fee";
-    if (selectedOthers && !form.othersLabel.trim()) e.others = "Specify the 'Others' description";
+    if (!form.name.trim())                          e.name        = "Required";
+    if (!form.parentPhone.trim())                   e.parentPhone = "Parent phone is required";
+    if (!form.cls)                                  e.cls         = "Select a class";
+    if (form.selectedFeeTypes.length === 0)         e.fees        = "Select at least one fee type";
+    if (totalDue <= 0)                              e.fees        = "Total fee must be > 0";
+    if (paidNum < 0)                                e.paid        = "Cannot be negative";
+    if (paidNum > totalDue)                         e.paid        = "Exceeds total fee";
+    if (selectedOthers && !form.othersLabel.trim()) e.others      = "Specify the 'Others' description";
     return e;
   };
 
@@ -446,7 +466,7 @@ function AddStudentModal({ onClose }) {
         amount: localFees[id] || 0,
       }));
       const res = await axios.post(`${API}/api/students`,
-        { name: form.name.trim(), adm: form.adm.trim(), cls: form.cls, phone: form.phone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
+        { name: form.name.trim(), cls: form.cls, phone: form.phone.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       addStudent(res.data);
@@ -486,14 +506,18 @@ function AddStudentModal({ onClose }) {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="field-group">
-                  <label className="settings-label">Admission number *</label>
-                  <input style={inp} value={form.adm} onChange={setFv("adm")} placeholder="ADM/2025/001" autoComplete="off" />
-                  {errors.adm && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.adm}</div>}
+                  <label className="settings-label">Parent / Guardian name</label>
+                  <input style={inp} value={form.parentName} onChange={setFv("parentName")} placeholder="e.g. Hassan Farah" autoComplete="off" />
                 </div>
                 <div className="field-group">
-                  <label className="settings-label">Phone (optional)</label>
-                  <input style={inp} value={form.phone} onChange={setFv("phone")} placeholder="07XX XXX XXX" />
+                  <label className="settings-label">Parent phone *</label>
+                  <input style={{ ...inp, borderColor: errors.parentPhone ? "var(--red)" : undefined }} value={form.parentPhone} onChange={setFv("parentPhone")} placeholder="07XX XXX XXX" />
+                  {errors.parentPhone && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.parentPhone}</div>}
                 </div>
+              </div>
+              <div className="field-group">
+                <label className="settings-label">Student phone <span style={{ fontWeight: 400, color: "var(--text3)", textTransform: "none" }}>(optional)</span></label>
+                <input style={inp} value={form.phone} onChange={setFv("phone")} placeholder="07XX XXX XXX" />
               </div>
               <div className="field-group">
                 <label className="settings-label">Class *</label>
@@ -553,7 +577,14 @@ function AddStudentModal({ onClose }) {
           {step === 2 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ background: "var(--surface2)", borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)" }}>
-                {[["Name", form.name], ["Adm No.", form.adm], ["Class", form.cls], form.phone ? ["Phone", form.phone] : null].filter(Boolean).map(([k, v]) => (
+                {[
+                ["Name", form.name],
+                ["Class", form.cls],
+                form.parentName ? ["Parent Name", form.parentName] : null,
+                ["Parent Phone", form.parentPhone],
+                form.phone ? ["Student Phone", form.phone] : null,
+                ["Adm No.", "Auto-generated on save"],
+              ].filter(Boolean).map(([k, v]) => (
                   <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
                     <span style={{ fontSize: 12.5, color: "var(--text3)" }}>{k}</span>
                     <span style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{v}</span>

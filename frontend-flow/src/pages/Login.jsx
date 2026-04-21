@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -11,9 +12,10 @@ const Login = () => {
   const [loading, setLoading]   = useState(false);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
+    if (loading || !email || !password) return;
     setError('');
-    setLoading(true);
+    flushSync(() => setLoading(true));   // paint spinner BEFORE the network call
     try {
       await login(email, password);
       navigate('/dashboard', { replace: true });

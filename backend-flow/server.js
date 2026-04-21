@@ -253,20 +253,46 @@ app.get("/api/students/:id/payments", requireAuth, async (req, res) => {
     const allTermsCleared    = termSummaries.length > 0 && termSummaries.every(t => t.cleared);
 
     res.json({
-      student: { id: student.id, name: student.name, adm: student.adm, cls: student.cls, phone: student.phone, fee: student.fee, paid: student.paid, daysOverdue: student.daysOverdue },
+      student: { id: student.id, name: student.name, adm: student.adm, cls: student.cls, phone: student.phone, parentName: student.parentName || null, parentPhone: student.parentPhone || null, fee: student.fee, paid: student.paid, daysOverdue: student.daysOverdue },
       termSummaries, hasUnpaidPastTerm, allTermsCleared,
     });
   } catch (e) { console.error("student payments:", e); res.status(500).json({ message: "Something went wrong" }); }
 });
 
+// Helper: generate school-specific admission number
+// Format: <SchoolInitials>-<StudentInitials>-<Sequence>
+// e.g. "Yahya High School" + "Ahmed Farah" + 7th student → YH-AF-007
+function generateAdm(schoolName, studentName, totalCount) {
+  const schoolInitials = (schoolName || "FF")
+    .split(/\s+/)
+    .filter(w => /^[A-Za-z]/.test(w))
+    .slice(0, 3)
+    .map(w => w[0].toUpperCase())
+    .join("");
+  const nameInitials = (studentName || "ST")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0].toUpperCase())
+    .join("");
+  const seq = String(totalCount + 1).padStart(3, "0");
+  return `${schoolInitials || "FF"}-${nameInitials || "ST"}-${seq}`;
+}
+
 app.post("/api/students", requireAuth, async (req, res) => {
-  const { name, adm, cls, fee, paid, phone, feeBreakdown } = req.body;
-  if (!name || !adm) return res.status(400).json({ message: "Name and admission number required" });
+  const { name, cls, fee, paid, phone, parentName, parentPhone, feeBreakdown } = req.body;
+  if (!name) return res.status(400).json({ message: "Student name is required" });
+  if (!parentPhone) return res.status(400).json({ message: "Parent phone is required" });
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     const count = await prisma.student.count({ where: { userId: req.userId } });
     const limit = PLAN_LIMITS[user?.plan || "free"].students;
     if (count >= limit) return res.status(403).json({ message: `Student limit reached (${limit}). Upgrade to add more.`, upgradeRequired: true });
+
+    // Auto-generate unique admission number; retry if collision (rare)
+    let adm = generateAdm(user?.schoolName, name, count);
+    const existing = await prisma.student.findFirst({ where: { userId: req.userId, adm } });
+    if (existing) adm = generateAdm(user?.schoolName, name, count + Math.floor(Math.random() * 50) + 1);
 
     const parsedFee  = parseFloat(fee)  || 0;
     const parsedPaid = parseFloat(paid) || 0;
@@ -275,14 +301,16 @@ app.post("/api/students", requireAuth, async (req, res) => {
       ? Math.max(0, Math.floor((Date.now() - new Date(activeTerm.startDate).getTime()) / (1000 * 60 * 60 * 24)))
       : 0;
 
-    const student = await prisma.student.create({ data: { name, adm, cls: cls || "", fee: parsedFee, paid: parsedPaid, phone: phone || null, daysOverdue, userId: req.userId } });
+    const student = await prisma.student.create({
+      data: { name, adm, cls: cls || "", fee: parsedFee, paid: parsedPaid, phone: phone || null, parentName: parentName || null, parentPhone: parentPhone || null, daysOverdue, userId: req.userId },
+    });
 
     if (parsedPaid > 0) {
       await prisma.payment.create({ data: { amount: parsedPaid, method: "manual", txnRef: null, feeBreakdown: feeBreakdown || [], studentId: student.id, userId: req.userId } });
     }
     res.status(201).json(student);
   } catch (e) {
-    if (e.code === "P2002") return res.status(400).json({ message: "Admission number already exists" });
+    if (e.code === "P2002") return res.status(400).json({ message: "Admission number conflict — please try again" });
     console.error("create student:", e);
     res.status(500).json({ message: "Something went wrong" });
   }
@@ -292,7 +320,7 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
   try {
     const s = await prisma.student.findFirst({ where: { id: req.params.id, userId: req.userId } });
     if (!s) return res.status(404).json({ message: "Not found" });
-    const { name, cls, phone, fee, paid, termId } = req.body;
+    const { name, cls, phone, parentName, parentPhone, fee, paid, termId } = req.body;
 
     const newFee  = fee  !== undefined ? parseFloat(fee)  : s.fee;
     const newPaid = paid !== undefined ? parseFloat(paid) : s.paid;
@@ -308,7 +336,7 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
 
     const updated = await prisma.student.update({
       where: { id: req.params.id },
-      data: { ...(name !== undefined && { name }), ...(cls !== undefined && { cls }), ...(phone !== undefined && { phone }), ...(fee !== undefined && { fee: newFee }), ...(paid !== undefined && { paid: newPaid }), ...(termId !== undefined && { termId }), daysOverdue },
+      data: { ...(name !== undefined && { name }), ...(cls !== undefined && { cls }), ...(phone !== undefined && { phone }), ...(parentName !== undefined && { parentName }), ...(parentPhone !== undefined && { parentPhone }), ...(fee !== undefined && { fee: newFee }), ...(paid !== undefined && { paid: newPaid }), ...(termId !== undefined && { termId }), daysOverdue },
     });
     res.json(updated);
   } catch { res.status(500).json({ message: "Something went wrong" }); }

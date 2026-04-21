@@ -447,9 +447,9 @@ function AddPaymentModal({ onClose }) {
               {/* M-Pesa fields — always shown when mpesa selected, locked for free plan */}
               {form.method === "mpesa" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {/* STK Push section — always visible, locked if free */}
-                  <div style={{ background: canSTK ? "var(--surface2)" : "var(--surface3)", border: `1px solid ${canSTK ? "var(--border)" : "var(--border)"}`, borderRadius: 10, padding: "14px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: canSTK ? 10 : 0 }}>
+                  {/* STK Push section — always visible; inputs disabled for free plan */}
+                  <div style={{ background: "var(--surface2)", border: `1px solid ${canSTK ? "var(--border)" : "var(--border)"}`, borderRadius: 10, padding: "14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: canSTK ? "var(--text)" : "var(--text3)", display: "flex", alignItems: "center", gap: 6 }}>
                           {!canSTK && <span style={{ color: "var(--amber)" }}><LockIcon /></span>}
@@ -468,20 +468,28 @@ function AddPaymentModal({ onClose }) {
                         </a>
                       )}
                     </div>
-                    {canSTK && (
-                      <>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <input style={{ ...inp, flex: 1 }} placeholder="07XX XXX XXX" value={form.phone} onChange={set("phone")} />
-                          <button onClick={handleSTK} disabled={!phoneValid || stkLoading || totalAmount <= 0} style={{ padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: phoneValid && !stkLoading ? "pointer" : "not-allowed", fontFamily: "inherit", background: phoneValid ? "var(--green-bg)" : "var(--surface2)", border: `1px solid ${phoneValid ? "var(--green-border)" : "var(--border)"}`, color: phoneValid ? "var(--green)" : "var(--text3)", whiteSpace: "nowrap" }}>
-                            {stkLoading ? "Sending…" : "Send Prompt"}
-                          </button>
-                        </div>
-                        {stkSent && (
-                          <div style={{ fontSize: 12, color: "var(--green)", marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                            ✓ Prompt sent — client will receive a pop-up to enter their PIN
-                          </div>
-                        )}
-                      </>
+                    {/* Phone input + button — always rendered, disabled on free plan */}
+                    <div style={{ display: "flex", gap: 8, opacity: canSTK ? 1 : 0.45, pointerEvents: canSTK ? "auto" : "none" }}>
+                      <input
+                        style={{ ...inp, flex: 1, cursor: canSTK ? "text" : "not-allowed" }}
+                        placeholder="07XX XXX XXX"
+                        value={form.phone}
+                        onChange={canSTK ? set("phone") : undefined}
+                        readOnly={!canSTK}
+                        tabIndex={canSTK ? 0 : -1}
+                      />
+                      <button
+                        onClick={canSTK ? handleSTK : undefined}
+                        disabled={!canSTK || !phoneValid || stkLoading || totalAmount <= 0}
+                        style={{ padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: canSTK && phoneValid && !stkLoading ? "pointer" : "not-allowed", fontFamily: "inherit", background: canSTK && phoneValid ? "var(--green-bg)" : "var(--surface3)", border: `1px solid ${canSTK && phoneValid ? "var(--green-border)" : "var(--border)"}`, color: canSTK && phoneValid ? "var(--green)" : "var(--text3)", whiteSpace: "nowrap" }}
+                      >
+                        {stkLoading ? "Sending…" : "Send STK Push"}
+                      </button>
+                    </div>
+                    {stkSent && canSTK && (
+                      <div style={{ fontSize: 12, color: "var(--green)", marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                        ✓ Prompt sent — client will receive a pop-up to enter their PIN
+                      </div>
                     )}
                   </div>
 
