@@ -5,9 +5,10 @@ import AppLayout    from './layouts/AppLayout';
 import Landing      from './pages/Landing';
 import Login        from './pages/Login';
 import Register     from './pages/Register';
-import Dashboard    from './pages/Dashboard';
-import Students     from './pages/Students';
-import Payments     from './pages/Payments';
+import Dashboard        from './pages/Dashboard';
+import Students         from './pages/Students';
+import Payments         from './pages/Payments';
+import InvoicesReceipts from './pages/InvoicesReceipts';
 
 // Redirects to /login if not logged in
 function PrivateRoute({ children }) {
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/students"  element={<Students />} />
         <Route path="/payments"  element={<Payments />} />
+        <Route path="/invoices"  element={<InvoicesReceipts />} />
       </Route>
 
       {/* Fallback */}
