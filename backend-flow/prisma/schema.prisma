@@ -29,7 +29,7 @@ model User {
 model Student {
   id          String    @id @default(uuid())
   name        String
-  adm         String    @unique
+  adm         String    @@unique([userId, adm])
   cls         String    @default("")
   fee         Float     @default(0)
   paid        Float     @default(0)
