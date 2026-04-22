@@ -49,7 +49,7 @@ function EditStudentModal({ student, onClose, token }) {
   const { classes } = useFeeStructure();
   const updateStudent = useAppStore(s => s.updateStudent);
 
-  const [form, setForm] = useState({ name: student.name || "", cls: student.cls || "", phone: student.phone || "", parentName: student.parentName || "", parentPhone: student.parentPhone || "", fee: student.fee || "" });
+  const [form, setForm] = useState({ name: student.name || "", cls: student.cls || "", parentEmail: student.parentEmail || "", parentName: student.parentName || "", parentPhone: student.parentPhone || "", fee: student.fee || "" });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -63,7 +63,7 @@ function EditStudentModal({ student, onClose, token }) {
     setSaving(true); setError("");
     try {
       const res = await axios.patch(`${API}/api/students/${student.id}`,
-        { name: form.name.trim(), cls: form.cls, phone: form.phone.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee },
+        { name: form.name.trim(), cls: form.cls, parentEmail: form.parentEmail.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       updateStudent(res.data);
@@ -99,8 +99,8 @@ function EditStudentModal({ student, onClose, token }) {
               </select>
             </div>
             <div className="field-group">
-              <label className="settings-label">Student phone</label>
-              <input style={inp} value={form.phone} onChange={setFv("phone")} placeholder="07XX XXX XXX" />
+              <label className="settings-label">Parent email</label>
+              <input style={inp} type="email" value={form.parentEmail} onChange={setFv("parentEmail")} placeholder="e.g. parent@email.com" />
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -240,14 +240,16 @@ function StudentProfileModal({ studentId, onClose, onEdit, token }) {
                     <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", marginBottom: 2 }}>{data.student.name}</div>
                     <div style={{ fontSize: 12.5, color: "var(--text3)" }}>
                       {data.student.cls} &nbsp;·&nbsp; {data.student.adm}
-                      {data.student.phone && <> &nbsp;·&nbsp; {data.student.phone}</>}
                     </div>
-                    {(data.student.parentName || data.student.parentPhone) && (
+                    {(data.student.parentName || data.student.parentPhone || data.student.parentEmail) && (
                       <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                         <span style={{ color: "var(--text2)" }}>👤 Parent:</span>
                         {data.student.parentName && <span>{data.student.parentName}</span>}
                         {data.student.parentPhone && (
                           <a href={`tel:${data.student.parentPhone}`} style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 500 }}>{data.student.parentPhone}</a>
+                        )}
+                        {data.student.parentEmail && (
+                          <a href={`mailto:${data.student.parentEmail}`} style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 500 }}>{data.student.parentEmail}</a>
                         )}
                       </div>
                     )}
@@ -405,7 +407,7 @@ function AddStudentModal({ onClose }) {
   const [saving,   setSaving]   = useState(false);
   const [apiError, setApiError] = useState("");
   const [errors,   setErrors]   = useState({});
-  const [form,     setForm]     = useState({ name: "", cls: "", phone: "", parentName: "", parentPhone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
+  const [form,     setForm]     = useState({ name: "", cls: "", parentEmail: "", parentName: "", parentPhone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
   const [localFees, setLocalFees] = useState({});
 
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -466,7 +468,7 @@ function AddStudentModal({ onClose }) {
         amount: localFees[id] || 0,
       }));
       const res = await axios.post(`${API}/api/students`,
-        { name: form.name.trim(), cls: form.cls, phone: form.phone.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
+        { name: form.name.trim(), cls: form.cls, parentEmail: form.parentEmail.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       addStudent(res.data);
@@ -516,8 +518,8 @@ function AddStudentModal({ onClose }) {
                 </div>
               </div>
               <div className="field-group">
-                <label className="settings-label">Student phone <span style={{ fontWeight: 400, color: "var(--text3)", textTransform: "none" }}>(optional)</span></label>
-                <input style={inp} value={form.phone} onChange={setFv("phone")} placeholder="07XX XXX XXX" />
+                <label className="settings-label">Parent email <span style={{ fontWeight: 400, color: "var(--text3)", textTransform: "none" }}>(optional)</span></label>
+                <input style={inp} type="email" value={form.parentEmail} onChange={setFv("parentEmail")} placeholder="e.g. parent@email.com" />
               </div>
               <div className="field-group">
                 <label className="settings-label">Class *</label>
@@ -582,7 +584,7 @@ function AddStudentModal({ onClose }) {
                 ["Class", form.cls],
                 form.parentName ? ["Parent Name", form.parentName] : null,
                 ["Parent Phone", form.parentPhone],
-                form.phone ? ["Student Phone", form.phone] : null,
+                form.parentEmail ? ["Parent Email", form.parentEmail] : null,
                 ["Adm No.", "Auto-generated on save"],
               ].filter(Boolean).map(([k, v]) => (
                   <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>

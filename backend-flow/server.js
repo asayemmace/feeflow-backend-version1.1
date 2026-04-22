@@ -253,7 +253,7 @@ app.get("/api/students/:id/payments", requireAuth, async (req, res) => {
     const allTermsCleared    = termSummaries.length > 0 && termSummaries.every(t => t.cleared);
 
     res.json({
-      student: { id: student.id, name: student.name, adm: student.adm, cls: student.cls, phone: student.phone, parentName: student.parentName || null, parentPhone: student.parentPhone || null, fee: student.fee, paid: student.paid, daysOverdue: student.daysOverdue },
+      student: { id: student.id, name: student.name, adm: student.adm, cls: student.cls, parentEmail: student.parentEmail || null, parentName: student.parentName || null, parentPhone: student.parentPhone || null, fee: student.fee, paid: student.paid, daysOverdue: student.daysOverdue },
       termSummaries, hasUnpaidPastTerm, allTermsCleared,
     });
   } catch (e) { console.error("student payments:", e); res.status(500).json({ message: "Something went wrong" }); }
@@ -280,7 +280,7 @@ function generateAdm(schoolName, studentName, totalCount) {
 }
 
 app.post("/api/students", requireAuth, async (req, res) => {
-  const { name, cls, fee, paid, phone, parentName, parentPhone, feeBreakdown } = req.body;
+  const { name, cls, fee, paid, parentEmail, parentName, parentPhone, feeBreakdown } = req.body;
   if (!name) return res.status(400).json({ message: "Student name is required" });
   if (!parentPhone) return res.status(400).json({ message: "Parent phone is required" });
   try {
@@ -302,7 +302,7 @@ app.post("/api/students", requireAuth, async (req, res) => {
       : 0;
 
     const student = await prisma.student.create({
-      data: { name, adm, cls: cls || "", fee: parsedFee, paid: parsedPaid, phone: phone || null, parentName: parentName || null, parentPhone: parentPhone || null, daysOverdue, userId: req.userId },
+      data: { name, adm, cls: cls || "", fee: parsedFee, paid: parsedPaid, parentEmail: parentEmail || null, parentName: parentName || null, parentPhone: parentPhone || null, daysOverdue, userId: req.userId },
     });
 
     if (parsedPaid > 0) {
@@ -320,7 +320,7 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
   try {
     const s = await prisma.student.findFirst({ where: { id: req.params.id, userId: req.userId } });
     if (!s) return res.status(404).json({ message: "Not found" });
-    const { name, cls, phone, parentName, parentPhone, fee, paid, termId } = req.body;
+    const { name, cls, parentEmail, parentName, parentPhone, fee, paid, termId } = req.body;
 
     const newFee  = fee  !== undefined ? parseFloat(fee)  : s.fee;
     const newPaid = paid !== undefined ? parseFloat(paid) : s.paid;
@@ -336,7 +336,7 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
 
     const updated = await prisma.student.update({
       where: { id: req.params.id },
-      data: { ...(name !== undefined && { name }), ...(cls !== undefined && { cls }), ...(phone !== undefined && { phone }), ...(parentName !== undefined && { parentName }), ...(parentPhone !== undefined && { parentPhone }), ...(fee !== undefined && { fee: newFee }), ...(paid !== undefined && { paid: newPaid }), ...(termId !== undefined && { termId }), daysOverdue },
+      data: { ...(name !== undefined && { name }), ...(cls !== undefined && { cls }), ...(parentEmail !== undefined && { parentEmail }), ...(parentName !== undefined && { parentName }), ...(parentPhone !== undefined && { parentPhone }), ...(fee !== undefined && { fee: newFee }), ...(paid !== undefined && { paid: newPaid }), ...(termId !== undefined && { termId }), daysOverdue },
     });
     res.json(updated);
   } catch { res.status(500).json({ message: "Something went wrong" }); }
