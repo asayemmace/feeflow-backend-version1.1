@@ -5,6 +5,7 @@ import AppLayout    from './layouts/AppLayout';
 import Landing      from './pages/Landing';
 import Login        from './pages/Login';
 import Register     from './pages/Register';
+import TermsPage    from './pages/TermsPage';
 import Dashboard        from './pages/Dashboard';
 import Students         from './pages/Students';
 import Payments         from './pages/Payments';
@@ -31,6 +32,9 @@ function AppRoutes() {
       <Route path="/" element={<GuestRoute><Landing /></GuestRoute>} />
       <Route path="/login"    element={<GuestRoute><Login /></GuestRoute>} />
       <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
+
+      {/* Terms — publicly accessible, no auth required */}
+      <Route path="/terms" element={<TermsPage />} />
 
       {/* Protected — all wrapped in AppLayout which renders the sidebar + <Outlet/> */}
       <Route

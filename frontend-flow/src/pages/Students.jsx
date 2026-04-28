@@ -407,7 +407,7 @@ function AddStudentModal({ onClose }) {
   const [saving,   setSaving]   = useState(false);
   const [apiError, setApiError] = useState("");
   const [errors,   setErrors]   = useState({});
-  const [form,     setForm]     = useState({ name: "", cls: "", parentEmail: "", parentName: "", parentPhone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
+  const [form,     setForm]     = useState({ name: "", adm: "", cls: "", parentEmail: "", parentName: "", parentPhone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
   const [localFees, setLocalFees] = useState({});
 
   const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -468,7 +468,7 @@ function AddStudentModal({ onClose }) {
         amount: localFees[id] || 0,
       }));
       const res = await axios.post(`${API}/api/students`,
-        { name: form.name.trim(), cls: form.cls, parentEmail: form.parentEmail.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
+        { name: form.name.trim(), adm: form.adm.trim(), cls: form.cls, parentEmail: form.parentEmail.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       addStudent(res.data);
@@ -505,6 +505,10 @@ function AddStudentModal({ onClose }) {
                 <label className="settings-label">Student full name *</label>
                 <input style={inp} value={form.name} onChange={setFv("name")} placeholder="e.g. Amina Wanjiru" autoComplete="off" />
                 {errors.name && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.name}</div>}
+              </div>
+              <div className="field-group">
+                <label className="settings-label">Admission number <span style={{ fontWeight: 400, color: "var(--text3)", textTransform: "none" }}>(optional)</span></label>
+                <input style={inp} value={form.adm} onChange={setFv("adm")} placeholder="e.g. ADM-0001" autoComplete="off" />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="field-group">
@@ -585,7 +589,7 @@ function AddStudentModal({ onClose }) {
                 form.parentName ? ["Parent Name", form.parentName] : null,
                 ["Parent Phone", form.parentPhone],
                 form.parentEmail ? ["Parent Email", form.parentEmail] : null,
-                ["Adm No.", "Auto-generated on save"],
+                ["Adm No.", form.adm],
               ].filter(Boolean).map(([k, v]) => (
                   <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
                     <span style={{ fontSize: 12.5, color: "var(--text3)" }}>{k}</span>

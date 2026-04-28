@@ -17,8 +17,8 @@ function hue(name) { return ((name || "").charCodeAt(0) * 37 + ((name || "").cha
 // ─── Plan Gate Banner ─────────────────────────────────────────────────────────
 function PlanGate({ feature, plan, children }) {
   const gates = {
-    invoices: { required: "pro",  label: "Pro or Max", desc: "Bulk & scheduled invoice delivery via WhatsApp and email" },
-    receipts: { required: "max",  label: "Max",        desc: "Instant auto-receipts on every payment" },
+    invoices: { required: "pro",  label: "Pro or Max", desc: "Bulk & scheduled invoice delivery via SMS to parents" },
+    receipts: { required: "max",  label: "Max",        desc: "Instant auto-receipts via SMS on every payment" },
   };
   const order = { free: 0, pro: 1, max: 2 };
   const gate = gates[feature];
@@ -58,11 +58,11 @@ function StatusPill({ status }) {
 
 // ─── Delivery Channel Badge ───────────────────────────────────────────────────
 function ChannelBadge({ channels }) {
-  const arr = Array.isArray(channels) ? channels : (channels || "").split(",").filter(Boolean);
+  const str = Array.isArray(channels) ? channels.join(",") : (channels || "");
   return (
     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-      {arr.includes("whatsapp") && <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: "rgba(37,211,102,0.12)", color: "#25d366", border: "1px solid rgba(37,211,102,0.25)", fontWeight: 600 }}>WhatsApp</span>}
-      {arr.includes("email")    && <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: "rgba(96,165,250,0.1)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.2)", fontWeight: 600 }}>Email</span>}
+      {(str.includes("sms") || str.includes("whatsapp")) && <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: "rgba(34,211,164,0.1)", color: "var(--accent)", border: "1px solid rgba(34,211,164,0.2)", fontWeight: 600 }}>SMS</span>}
+      {str.includes("email") && <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: "rgba(96,165,250,0.1)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.2)", fontWeight: 600 }}>Email</span>}
     </div>
   );
 }
@@ -162,61 +162,101 @@ function InvoicePreview({ invoice, school, onClose }) {
 
 // ─── Receipt Preview ──────────────────────────────────────────────────────────
 function ReceiptPreview({ receipt, school, onClose }) {
-  const methodLabel = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash", manual: "Manual Entry" };
+  const METHOD = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash", manual: "Cash" };
+  const balance = receipt.balance;
+
+  const handlePrint = () => {
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Receipt</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;color:#1a1a2e;padding:40px;font-size:13px;max-width:480px;margin:0 auto}
+.hdr{background:#059669;color:#fff;padding:20px 24px;border-radius:8px;text-align:center;margin-bottom:22px}
+.hdr h1{font-size:16px;font-weight:700;letter-spacing:1px}.hdr .sub{font-size:11px;opacity:.8;margin-top:3px;letter-spacing:1px;text-transform:uppercase}
+.rec-no{text-align:center;font-size:12px;color:#888;margin-bottom:18px}
+.amount-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px;text-align:center;margin-bottom:20px}
+.amount-box .lbl{font-size:11px;color:#16a34a;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.amount-box .val{font-size:28px;font-weight:800;color:#16a34a}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:12.5px}
+.row .lbl{color:#666}.row .val{font-weight:600;text-align:right;max-width:60%}
+.bal{border-radius:8px;padding:10px 14px;margin-top:14px;display:flex;justify-content:space-between;font-weight:700;font-size:13px}
+.footer{text-align:center;font-size:11px;color:#aaa;margin-top:20px;padding-top:14px;border-top:1px dashed #ddd;line-height:1.7}
+@media print{body{padding:20px}}
+</style></head><body>
+<div class="hdr"><h1>FEEFLOW</h1><div class="sub">${school} · Official Payment Receipt</div></div>
+<div class="rec-no">Receipt No: <strong style="font-family:monospace;color:#333">${receipt.receiptNo || "REC-001"}</strong></div>
+<div class="amount-box"><div class="lbl">Amount Received</div><div class="val">KES ${fmt(receipt.amount)}</div></div>
+<div class="row"><span class="lbl">Student</span><span class="val">${receipt.studentName}</span></div>
+${receipt.admNo ? `<div class="row"><span class="lbl">Adm. No.</span><span class="val">${receipt.admNo}</span></div>` : ""}
+<div class="row"><span class="lbl">Class</span><span class="val">${receipt.className}</span></div>
+${receipt.termName ? `<div class="row"><span class="lbl">Term</span><span class="val">${receipt.termName}</span></div>` : ""}
+<div class="row"><span class="lbl">Payment Method</span><span class="val">${METHOD[receipt.method] || receipt.method}</span></div>
+${receipt.txnRef ? `<div class="row"><span class="lbl">Transaction Ref</span><span class="val" style="font-family:monospace">${receipt.txnRef}</span></div>` : ""}
+<div class="row"><span class="lbl">Date & Time</span><span class="val">${fmtDatetime(receipt.paidAt)}</span></div>
+${balance !== undefined ? `<div class="bal" style="background:${balance > 0 ? "#fff5f5" : "#f0fdf4"};border:1px solid ${balance > 0 ? "#fecaca" : "#bbf7d0"}"><span style="color:${balance > 0 ? "#c00" : "#16a34a"}">Outstanding Balance</span><span style="color:${balance > 0 ? "#c00" : "#16a34a"}">${balance > 0 ? `KES ${fmt(balance)}` : "Cleared ✓"}</span></div>` : ""}
+<div class="footer">Thank you for your payment · ${school}<br>Powered by FeeFlow · Fee Management Platform</div>
+</body></html>`;
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => setTimeout(() => win.print(), 300);
+  };
+
   return (
     <>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }} />
-      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 90, width: "100%", maxWidth: 480, background: "#fff", borderRadius: 14, boxShadow: "0 32px 80px rgba(0,0,0,0.6)", animation: "modalIn .2s ease" }}>
-        <div style={{ padding: 36, fontFamily: "'Georgia', serif", color: "#111" }}>
-          <div style={{ textAlign: "center", marginBottom: 24, paddingBottom: 20, borderBottom: "2px solid #111" }}>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{school || "School Name"}</div>
-            <div style={{ fontSize: 11, color: "#777", marginTop: 4, letterSpacing: 2, textTransform: "uppercase" }}>Official Payment Receipt</div>
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 90, width: "100%", maxWidth: 440, background: "#fff", borderRadius: 14, boxShadow: "0 32px 80px rgba(0,0,0,0.6)", overflow: "hidden", animation: "modalIn .2s ease" }}>
+        {/* Green header */}
+        <div style={{ background: "#059669", color: "#fff", padding: "20px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>FEEFLOW</div>
+          <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2, letterSpacing: 1, textTransform: "uppercase" }}>{school} · Official Payment Receipt</div>
+        </div>
+
+        <div style={{ padding: 24 }}>
+          {/* Receipt no */}
+          <div style={{ textAlign: "center", fontSize: 12, color: "#888", marginBottom: 18 }}>
+            Receipt No: <strong style={{ color: "#333", fontFamily: "monospace" }}>{receipt.receiptNo || "REC-001"}</strong>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24, fontSize: 13 }}>
-            {[
-              ["Receipt No.", receipt.receiptNo || "REC-001"],
-              ["Date",       fmtDatetime(receipt.paidAt)],
-              ["Student",    receipt.studentName],
-              ["Adm. No.",   receipt.admNo],
-              ["Class",      receipt.className],
-              ["Term",       receipt.termName || "—"],
-            ].map(([k, v]) => (
-              <div key={k}>
-                <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 0.8 }}>{k}</div>
-                <div style={{ fontWeight: 600, marginTop: 2 }}>{v}</div>
-              </div>
-            ))}
+
+          {/* Amount box */}
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: 18, textAlign: "center", marginBottom: 20 }}>
+            <div style={{ fontSize: 11, color: "#16a34a", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Amount Received</div>
+            <div style={{ fontSize: 30, fontWeight: 800, color: "#16a34a", fontVariantNumeric: "tabular-nums" }}>KES {fmt(receipt.amount)}</div>
           </div>
-          <div style={{ background: "#f9f9f9", border: "1px solid #eee", borderRadius: 10, padding: 16, marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
-              <span style={{ color: "#666" }}>Payment Method</span>
-              <span style={{ fontWeight: 600 }}>{methodLabel[receipt.method] || receipt.method}</span>
+
+          {/* Details */}
+          {[
+            ["Student",        receipt.studentName],
+            receipt.admNo     ? ["Adm. No.",    receipt.admNo]     : null,
+            ["Class",          receipt.className],
+            receipt.termName  ? ["Term",         receipt.termName]  : null,
+            ["Payment Method", METHOD[receipt.method] || receipt.method],
+            receipt.txnRef    ? ["Transaction Ref", receipt.txnRef] : null,
+            ["Date & Time",    fmtDatetime(receipt.paidAt)],
+          ].filter(Boolean).map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}>
+              <span style={{ color: "#666" }}>{k}</span>
+              <span style={{ fontWeight: 600, textAlign: "right", maxWidth: "60%", fontFamily: k === "Transaction Ref" ? "monospace" : "inherit" }}>{v}</span>
             </div>
-            {receipt.txnRef && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
-                <span style={{ color: "#666" }}>Transaction Ref</span>
-                <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{receipt.txnRef}</span>
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 10, borderTop: "1px solid #eee" }}>
-              <span style={{ fontSize: 16, fontWeight: 700 }}>Amount Received</span>
-              <span style={{ fontSize: 18, fontWeight: 700, color: "#27ae60" }}>KES {fmt(receipt.amount)}</span>
-            </div>
-          </div>
-          {receipt.balance !== undefined && (
-            <div style={{ fontSize: 13, display: "flex", justifyContent: "space-between", padding: "10px 14px", background: receipt.balance > 0 ? "#fff5f5" : "#f0fff4", borderRadius: 8, fontWeight: 600 }}>
-              <span style={{ color: receipt.balance > 0 ? "#c00" : "#27ae60" }}>Outstanding Balance</span>
-              <span style={{ color: receipt.balance > 0 ? "#c00" : "#27ae60" }}>{receipt.balance > 0 ? `KES ${fmt(receipt.balance)}` : "Cleared ✓"}</span>
+          ))}
+
+          {/* Balance */}
+          {balance !== undefined && (
+            <div style={{ marginTop: 14, padding: "11px 14px", borderRadius: 9, background: balance > 0 ? "#fff5f5" : "#f0fdf4", border: `1px solid ${balance > 0 ? "#fecaca" : "#bbf7d0"}`, display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 13 }}>
+              <span style={{ color: balance > 0 ? "#c00" : "#16a34a" }}>Outstanding Balance</span>
+              <span style={{ color: balance > 0 ? "#c00" : "#16a34a" }}>{balance > 0 ? `KES ${fmt(balance)}` : "Cleared ✓"}</span>
             </div>
           )}
-          <div style={{ marginTop: 20, fontSize: 11, color: "#aaa", textAlign: "center", lineHeight: 1.7 }}>
+
+          <div style={{ marginTop: 16, fontSize: 11, color: "#aaa", textAlign: "center", lineHeight: 1.7 }}>
             Thank you for your payment · {school}<br/>
-            <em>Generated by FeeFlow</em>
+            <em>Powered by FeeFlow</em>
           </div>
         </div>
-        <div style={{ padding: "14px 24px", borderTop: "1px solid #eee", display: "flex", justifyContent: "flex-end", gap: 10, background: "#fafafa", borderRadius: "0 0 14px 14px" }}>
-          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, background: "transparent", border: "1px solid #ddd", fontSize: 13, cursor: "pointer" }}>Close</button>
-          <button onClick={() => window.print()} style={{ padding: "9px 18px", borderRadius: 8, background: "#111", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Print / Save PDF</button>
+
+        <div style={{ padding: "14px 24px", borderTop: "1px solid #eee", display: "flex", justifyContent: "flex-end", gap: 10, background: "#fafafa" }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, background: "transparent", border: "1px solid #ddd", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+          <button onClick={handlePrint} style={{ padding: "9px 18px", borderRadius: 8, background: "#059669", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>⬇ Download / Print PDF</button>
         </div>
       </div>
       <style>{`@keyframes modalIn{from{opacity:0;transform:translate(-50%,-48%)}to{opacity:1;transform:translate(-50%,-50%)}}`}</style>
@@ -227,7 +267,7 @@ function ReceiptPreview({ receipt, school, onClose }) {
 // ─── Create Invoice Modal ─────────────────────────────────────────────────────
 function CreateInvoiceModal({ onClose, token, schoolName }) {
   const students = useAppStore(s => s.students);
-  const [step,         setStep]         = useState(1); // 1=select, 2=configure, 3=review
+  const [step,         setStep]         = useState(1); // 1=select, 2=configure, 3=preview, 4=review
   const [mode,         setMode]         = useState("bulk"); // bulk | single
   const [selectedIds,  setSelectedIds]  = useState([]);
   const [filterClass,  setFilterClass]  = useState("all");
@@ -235,7 +275,7 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
   const [dueDate,      setDueDate]      = useState("");
   const [sendDate,     setSendDate]     = useState("");
   const [sendTime,     setSendTime]     = useState("08:00");
-  const [channels,     setChannels]     = useState(["whatsapp"]);
+  const [channels,     setChannels]     = useState(["sms"]);
   const [note,         setNote]         = useState("");
   const [termName,     setTermName]     = useState("");
   const [sending,      setSending]      = useState(false);
@@ -263,8 +303,8 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
     if (selectedIds.length === 0) { setError("Select at least one student"); return; }
     // Check parent contact info
     const missing = selectedStudents.filter(s => {
-      if (channels.includes("whatsapp") && !s.parentPhone) return true;
-      if (channels.includes("email")    && !s.email && !s.parentEmail) return true;
+      if (channels.includes("sms")   && !s.parentPhone) return true;
+      if (channels.includes("email") && !s.email && !s.parentEmail) return true;
       return false;
     });
     if (missing.length > 0) { setError(`${missing.length} student(s) missing required contact info for selected channels.`); return; }
@@ -295,13 +335,13 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Create Invoice Batch</div>
-              <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>Step {step} of 3 — {["Select students","Configure & schedule","Review & send"][step-1]}</div>
+              <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>Step {step} of 4 — {["Select students","Configure & schedule","Preview invoice","Review & send"][step-1]}</div>
             </div>
             <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text2)", fontSize: 16 }}>×</button>
           </div>
           {/* Step bar */}
           <div style={{ display: "flex", gap: 4, marginTop: 14 }}>
-            {[1,2,3].map(i => (
+            {[1,2,3,4].map(i => (
               <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: step >= i ? "var(--accent)" : "var(--surface3)", transition: "background .3s" }} />
             ))}
           </div>
@@ -355,7 +395,7 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", display: "flex", alignItems: "center", gap: 6 }}>
                           {s.name}
-                          {!hasPh && <span style={{ fontSize: 10, color: "var(--amber)", background: "var(--amber-bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--amber-border)" }}>No phone</span>}
+                          {!hasPh && <span style={{ fontSize: 10, color: "var(--amber)", background: "var(--amber-bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--amber-border)" }}>No SMS</span>}
                         </div>
                         <div style={{ fontSize: 11, color: "var(--text3)" }}>{s.cls} · {s.adm}</div>
                       </div>
@@ -412,8 +452,8 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
                 <label className="settings-label">Delivery channels *</label>
                 <div style={{ display: "flex", gap: 10 }}>
                   {[
-                    { id: "whatsapp", label: "📱 WhatsApp", desc: "Via parent phone" },
-                    { id: "email",    label: "✉️ Email",    desc: "Via parent email" },
+                    { id: "sms",   label: "📱 SMS",     desc: "Via parent phone — sent by FeeFlow" },
+                    { id: "email", label: "✉️ Email",   desc: "Via parent email" },
                   ].map(ch => {
                     const active = channels.includes(ch.id);
                     return (
@@ -434,9 +474,9 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
               {/* Contact coverage warning */}
               {(() => {
                 const noPhone = selectedStudents.filter(s => !s.parentPhone).length;
-                if (channels.includes("whatsapp") && noPhone > 0) return (
+                if (channels.includes("sms") && noPhone > 0) return (
                   <div style={{ fontSize: 12.5, color: "var(--amber)", background: "var(--amber-bg)", border: "1px solid var(--amber-border)", padding: "10px 14px", borderRadius: 8 }}>
-                    ⚠ {noPhone} student(s) have no parent phone — WhatsApp will be skipped for them.
+                    ⚠ {noPhone} student(s) have no parent phone — SMS will be skipped for them.
                   </div>
                 );
                 return null;
@@ -444,8 +484,105 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
             </div>
           )}
 
-          {/* ── Step 3: Review ── */}
-          {step === 3 && (
+
+          {/* ── Step 3: Invoice Preview ── */}
+          {step === 3 && (() => {
+            const previewStudent = selectedStudents[0];
+            if (!previewStudent) return <div style={{ color: "var(--text3)", fontSize: 13 }}>No student selected.</div>;
+            const balance = (previewStudent.fee || 0) - (previewStudent.paid || 0);
+            const dueDateFmt = dueDate ? new Date(dueDate).toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" }) : "—";
+            const today = new Date().toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" });
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ fontSize: 12.5, color: "var(--text3)", background: "var(--surface2)", borderRadius: 8, padding: "10px 14px", border: "1px solid var(--border)" }}>
+                  👁 Preview of invoice for <strong style={{ color: "var(--text)" }}>{previewStudent.name}</strong>. All {selectedIds.length} selected students will receive a similar invoice.
+                </div>
+                {/* White paper preview */}
+                <div style={{ background: "#fff", borderRadius: 12, padding: 28, color: "#111", fontFamily: "Georgia, serif", fontSize: 13, boxShadow: "0 4px 24px rgba(0,0,0,0.18)", maxHeight: 400, overflowY: "auto" }}>
+                  {/* Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, paddingBottom: 16, borderBottom: "2px solid #111" }}>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 700 }}>{schoolName}</div>
+                      <div style={{ fontSize: 11, color: "#666", marginTop: 3, letterSpacing: 1 }}>SCHOOL FEE INVOICE</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 10, color: "#888" }}>Invoice #</div>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>INV-{new Date().getFullYear()}-{String(previewStudent.adm || "AUTO").replace(/\W/g,"").slice(0,6)}</div>
+                      <div style={{ fontSize: 10, color: "#888", marginTop: 4 }}>Date issued</div>
+                      <div style={{ fontSize: 11 }}>{today}</div>
+                    </div>
+                  </div>
+                  {/* Bill to */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 18 }}>
+                    <div>
+                      <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>Bill To</div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{previewStudent.name}</div>
+                      <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>{previewStudent.cls}</div>
+                      <div style={{ fontSize: 11, color: "#555" }}>Adm: {previewStudent.adm || "—"}</div>
+                      {previewStudent.parentName  && <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Parent: {previewStudent.parentName}</div>}
+                      {previewStudent.parentPhone && <div style={{ fontSize: 11, color: "#555" }}>📱 {previewStudent.parentPhone}</div>}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>Payment Due</div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: "#c00" }}>{dueDateFmt}</div>
+                      {termName && <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Term: {termName}</div>}
+                    </div>
+                  </div>
+                  {/* Fee table */}
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 14 }}>
+                    <thead>
+                      <tr style={{ background: "#111", color: "#fff" }}>
+                        <th style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600 }}>Description</th>
+                        <th style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600 }}>Amount (KES)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(previewStudent.feeBreakdown?.length > 0
+                        ? previewStudent.feeBreakdown
+                        : [{ typeName: "Tuition Fee", amount: previewStudent.fee }]
+                      ).map((fb, i) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+                          <td style={{ padding: "8px 10px" }}>{fb.typeName || fb.name}</td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>{Number(fb.amount || 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: "2px solid #111" }}>
+                        <td style={{ padding: "8px 10px", fontWeight: 700 }}>Total Due</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700 }}>KES {Number(previewStudent.fee || 0).toLocaleString()}</td>
+                      </tr>
+                      {previewStudent.paid > 0 && (
+                        <>
+                          <tr>
+                            <td style={{ padding: "6px 10px", color: "#27ae60" }}>Amount Paid</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: "#27ae60" }}>KES {Number(previewStudent.paid).toLocaleString()}</td>
+                          </tr>
+                          <tr style={{ background: balance > 0 ? "#fff5f5" : "#f0fff4" }}>
+                            <td style={{ padding: "7px 10px", fontWeight: 700, color: balance > 0 ? "#c00" : "#27ae60" }}>Balance Remaining</td>
+                            <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700, color: balance > 0 ? "#c00" : "#27ae60" }}>KES {Number(balance).toLocaleString()}</td>
+                          </tr>
+                        </>
+                      )}
+                    </tfoot>
+                  </table>
+                  {note && <div style={{ fontSize: 11, color: "#555", background: "#f9f9f9", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}><strong>Note:</strong> {note}</div>}
+                  <div style={{ fontSize: 10, color: "#aaa", borderTop: "1px solid #eee", paddingTop: 10, lineHeight: 1.6 }}>
+                    Please ensure payment is made before the due date. For inquiries contact school administration.<br />
+                    <em>Generated by FeeFlow · {schoolName}</em>
+                  </div>
+                </div>
+                {selectedIds.length > 1 && (
+                  <div style={{ fontSize: 12, color: "var(--text3)", textAlign: "center" }}>
+                    + {selectedIds.length - 1} more student{selectedIds.length > 2 ? "s" : ""} will receive similar invoices
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ── Step 4: Review ── */}
+          {step === 4 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ background: "var(--surface2)", borderRadius: 10, border: "1px solid var(--border)", overflow: "hidden" }}>
                 {[
@@ -453,7 +590,8 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
                   ["Term",         termName || "—"],
                   ["Due date",     fmtDate(dueDate)],
                   ["Send",         sendDate ? `${fmtDate(sendDate)} at ${sendTime}` : "Immediately"],
-                  ["Channels",     channels.join(" + ").toUpperCase()],
+                  ["Channels",     channels.map(ch => ch === "sms" ? "SMS" : ch.charAt(0).toUpperCase() + ch.slice(1)).join(" + ")],
+
                   ["Total fees",   `KES ${fmt(totalFee)}`],
                 ].map(([k, v]) => (
                   <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
@@ -463,7 +601,7 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
                 ))}
               </div>
               <div style={{ fontSize: 12.5, color: "var(--text3)", background: "var(--surface2)", borderRadius: 9, padding: "12px 14px", border: "1px solid var(--border)", lineHeight: 1.7 }}>
-                A PDF invoice with fee breakdown will be generated per student and delivered via the selected channels. Receipts are auto-generated on payment.
+                An SMS with a secure invoice download link will be sent to each parent via FeeFlow. Receipts are auto-generated on payment (Max plan).
               </div>
               {error && <div style={{ fontSize: 12.5, color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red-border)", borderRadius: 8, padding: "10px 14px" }}>✕ {error}</div>}
             </div>
@@ -475,12 +613,13 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
           <button onClick={() => step > 1 ? setStep(s => s - 1) : onClose()} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>
             {step > 1 ? "← Back" : "Cancel"}
           </button>
-          {step < 3
+          {step < 4
             ? <button onClick={() => {
                 if (step === 1 && selectedIds.length === 0) { setError("Select at least one student"); return; }
+                if (step === 2 && !dueDate) { setError("Due date is required"); return; }
                 setError(""); setStep(s => s + 1);
               }} disabled={step === 1 && selectedIds.length === 0} style={{ padding: "9px 22px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: selectedIds.length > 0 || step > 1 ? "var(--accent)" : "var(--surface2)", border: "none", color: selectedIds.length > 0 || step > 1 ? "#0b1a14" : "var(--text3)", cursor: selectedIds.length > 0 || step > 1 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-                Next →
+                {step === 3 ? "Confirm & continue →" : "Next →"}
               </button>
             : <button onClick={handleSchedule} disabled={sending} style={{ padding: "9px 22px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: sending ? "var(--surface2)" : "var(--accent)", border: "none", color: sending ? "var(--text3)" : "#0b1a14", cursor: sending ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                 {sending ? "Sending…" : sendDate ? "📅 Schedule invoices" : "⚡ Send now"}
@@ -499,7 +638,7 @@ function ManualReceiptModal({ onClose, token, schoolName }) {
   const [studentId, setStudentId] = useState("");
   const [payments,  setPayments]  = useState([]);
   const [paymentId, setPaymentId] = useState("");
-  const [channels,  setChannels]  = useState(["whatsapp"]);
+  const [channels,  setChannels]  = useState(["sms"]);
   const [loading,   setLoading]   = useState(false);
   const [sending,   setSending]   = useState(false);
   const [error,     setError]     = useState("");
@@ -581,7 +720,7 @@ function ManualReceiptModal({ onClose, token, schoolName }) {
           <div className="field-group">
             <label className="settings-label">Send via</label>
             <div style={{ display: "flex", gap: 10 }}>
-              {[{ id: "whatsapp", label: "📱 WhatsApp" }, { id: "email", label: "✉️ Email" }].map(ch => {
+              {[{ id: "sms", label: "📱 SMS" }, { id: "email", label: "✉️ Email" }].map(ch => {
                 const active = channels.includes(ch.id);
                 return (
                   <div key={ch.id} onClick={() => setChannels(prev => prev.includes(ch.id) ? prev.filter(x => x !== ch.id) : [...prev, ch.id])} style={{ flex: 1, padding: "10px 14px", borderRadius: 9, border: `2px solid ${active ? "var(--accent)" : "var(--border)"}`, background: active ? "var(--green-bg)" : "var(--surface2)", cursor: "pointer", textAlign: "center", fontSize: 13.5, fontWeight: active ? 600 : 400, color: active ? "var(--text)" : "var(--text2)" }}>
@@ -771,7 +910,7 @@ export default function InvoicesReceipts() {
                 <EmptyState
                   icon="📄"
                   title="No invoices yet"
-                  sub="Create an invoice batch to send fee notifications to parents via WhatsApp and email."
+                  sub="Create an invoice batch to send fee notifications to parents via SMS and email."
                   action={<button onClick={() => setShowCreateInv(true)} style={{ padding: "9px 20px", borderRadius: 9, fontSize: 13, fontWeight: 700, background: "var(--accent)", border: "none", color: "#0b1a14", cursor: "pointer", fontFamily: "inherit" }}>Create first batch</button>}
                 />
               ) : (
@@ -851,8 +990,8 @@ export default function InvoicesReceipts() {
                 </div>
                 <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 1 }}>
                   {plan === "max"
-                    ? "Parents receive an instant WhatsApp message with a receipt download link every time a payment is recorded."
-                    : "Upgrade to Max to automatically send WhatsApp receipts to parents the moment a payment is recorded."}
+                    ? "Parents receive an instant SMS from FeeFlow with a receipt download link every time a payment is recorded."
+                    : "Upgrade to Max to automatically send SMS receipts to parents the moment a payment is recorded."}
                 </div>
               </div>
               {plan !== "max" && <a href="mailto:yahiawarsame@gmail.com?subject=FeeFlow Max Upgrade" style={{ marginLeft: "auto", padding: "7px 14px", borderRadius: 8, background: "var(--amber)", color: "#1a0f00", fontSize: 12, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>Upgrade →</a>}
@@ -930,9 +1069,9 @@ export default function InvoicesReceipts() {
               )}
             </div>
 
-            {/* WhatsApp receipt flow note */}
+            {/* SMS receipt flow note */}
             <div style={{ marginTop: 14, padding: "14px 16px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12.5, color: "var(--text3)", lineHeight: 1.7 }}>
-              <strong style={{ color: "var(--text2)" }}>How auto-receipts work:</strong> When a payment is recorded, the parent's WhatsApp number (from their phone on file) receives a message instantly with a secure link to download the PDF receipt. No manual action needed.
+              <strong style={{ color: "var(--text2)" }}>How auto-receipts work:</strong> When a payment is recorded, the parent receives an instant SMS from FeeFlow with a secure link to download their PDF receipt. No manual action needed on your end.
             </div>
           </div>
         )}

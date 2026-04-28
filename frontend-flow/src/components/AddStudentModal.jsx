@@ -13,7 +13,7 @@ const STATUSES = ['Paid', 'Partial', 'Unpaid'];
 
 export default function AddStudentModal({ onClose, onSave }) {
   const [formData, setFormData] = useState({
-    name: '', className: 'Form 1A', fee: '', status: 'Unpaid', paid: ''
+    name: '', adm: '', className: 'Form 1A', fee: '', status: 'Unpaid', paid: ''
   });
 
   const handleSubmit = async (e) => {
@@ -21,6 +21,10 @@ export default function AddStudentModal({ onClose, onSave }) {
 
     const fee = Number(formData.fee);
     if (!formData.name || !formData.className || Number.isNaN(fee)) return;
+    if (!formData.adm.trim()) {
+      toast.error('Admission number is required.');
+      return;
+    }
 
     let paid = formData.paid !== '' ? Number(formData.paid) : 0;
     if (Number.isNaN(paid) || paid < 0) paid = 0;
@@ -32,6 +36,7 @@ export default function AddStudentModal({ onClose, onSave }) {
     try {
       await onSave({
         name: formData.name,
+        adm: formData.adm.trim(),
         className: formData.className,
         fee,
         paid,
@@ -65,6 +70,18 @@ export default function AddStudentModal({ onClose, onSave }) {
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g. John Doe"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Admission Number</label>
+              <input
+                required
+                type="text"
+                className="form-input"
+                value={formData.adm}
+                onChange={e => setFormData({ ...formData, adm: e.target.value })}
+                placeholder="e.g. ADM-0001"
               />
             </div>
 

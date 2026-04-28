@@ -4,11 +4,29 @@ import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
+import crypto from "crypto";
 
 dotenv.config();
 
 const app    = express();
 const prisma = new PrismaClient();
+
+// ─── Credential encryption ────────────────────────────────────────────────────
+const ENC_KEY = (process.env.ENCRYPTION_KEY || "feeflow_default_key_32chars_pad!!").slice(0, 32);
+function encrypt(text) {
+  if (!text) return null;
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(ENC_KEY), iv);
+  return iv.toString("hex") + ":" + cipher.update(text, "utf8", "hex") + cipher.final("hex");
+}
+function decrypt(text) {
+  if (!text) return null;
+  try {
+    const [ivHex, encrypted] = text.split(":");
+    const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(ENC_KEY), Buffer.from(ivHex, "hex"));
+    return decipher.update(encrypted, "hex", "utf8") + decipher.final("utf8");
+  } catch { return null; }
+}
 
 const allowedOrigins = [
   process.env.FRONTEND_URL,
@@ -127,6 +145,137 @@ app.patch("/api/auth/password", requireAuth, async (req, res) => {
     await prisma.user.update({ where: { id: req.userId }, data: { password: await bcrypt.hash(newPassword, 10) } });
     res.json({ message: "Password updated" });
   } catch { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+// PATCH /api/auth/mpesa — save encrypted M-Pesa credentials per school
+app.patch("/api/auth/mpesa", requireAuth, async (req, res) => {
+  const { consumerKey, consumerSecret, shortcode, passkey } = req.body;
+  if (!consumerKey || !consumerSecret || !shortcode || !passkey)
+    return res.status(400).json({ message: "All M-Pesa fields are required" });
+  try {
+    await prisma.user.update({
+      where: { id: req.userId },
+      data: { mpesaConsumerKey: encrypt(consumerKey), mpesaConsumerSecret: encrypt(consumerSecret), mpesaShortcode: shortcode, mpesaPasskey: encrypt(passkey), mpesaConfigured: true },
+    });
+    res.json({ message: "M-Pesa credentials saved" });
+  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+});
+
+// PATCH /api/auth/sms — deprecated endpoint (SMS now centralized)
+app.patch("/api/auth/sms", requireAuth, async (req, res) => {
+  res.status(403).json({ message: "SMS credentials are now managed centrally by the administrator. Individual school credentials are no longer required." });
+});
+
+// ─── Forgot Password ─────────────────────────────────────────────────────────────
+// Store reset codes in memory (in production, use Redis or database)
+const resetCodes = new Map();
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: "Email is required" });
+  
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // Don't reveal if email exists or not for security
+      return res.json({ message: "If your email is registered, you will receive a reset code." });
+    }
+
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    
+    // Store reset code
+    resetCodes.set(email, { code, expiresAt, userId: user.id });
+    
+    // Send email with Resend
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #003366;">Password Reset - FeeFlow</h2>
+        <p>Hi ${user.name},</p>
+        <p>You requested a password reset for your FeeFlow account.</p>
+        <div style="background: #f0f4f8; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+          <p style="margin: 0; font-size: 24px; font-weight: bold; color: #003366; letter-spacing: 3px;">${code}</p>
+        </div>
+        <p>This code will expire in 15 minutes.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+        <p style="color: #666; font-size: 12px;">Sent by FeeFlow Fee Management Platform</p>
+      </div>
+    `;
+    
+    try {
+      await sendEmail(email, "Password Reset Code - FeeFlow", emailHtml, null);
+      res.json({ message: "Reset code sent to your email" });
+    } catch (emailError) {
+      console.error("Failed to send reset email:", emailError);
+      res.status(500).json({ message: "Failed to send reset email. Please try again." });
+    }
+  } catch (e) {
+    console.error("Forgot password error:", e);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+});
+
+app.post("/api/auth/verify-reset-code", async (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) return res.status(400).json({ message: "Email and code are required" });
+  
+  try {
+    const resetData = resetCodes.get(email);
+    if (!resetData) {
+      return res.status(400).json({ message: "Invalid or expired code" });
+    }
+    
+    if (resetData.code !== code) {
+      return res.status(400).json({ message: "Invalid code" });
+    }
+    
+    if (new Date() > resetData.expiresAt) {
+      resetCodes.delete(email);
+      return res.status(400).json({ message: "Code expired" });
+    }
+    
+    // Generate reset token
+    const resetToken = jwt.sign({ userId: resetData.userId, email }, process.env.JWT_SECRET, { expiresIn: '15m' });
+    
+    // Clear the used code
+    resetCodes.delete(email);
+    
+    res.json({ resetToken });
+  } catch (e) {
+    console.error("Verify reset code error:", e);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  const { resetToken, newPassword } = req.body;
+  if (!resetToken || !newPassword) return res.status(400).json({ message: "Reset token and new password are required" });
+  if (newPassword.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+  
+  try {
+    const decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+    
+    if (!user) {
+      return res.status(400).json({ message: "Invalid reset token" });
+    }
+    
+    // Update password
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: await bcrypt.hash(newPassword, 10) }
+    });
+    
+    res.json({ message: "Password reset successfully", token: jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" }) });
+  } catch (jwtError) {
+    if (jwtError.name === 'JsonWebTokenError' || jwtError.name === 'TokenExpiredError') {
+      return res.status(400).json({ message: "Invalid or expired reset token" });
+    }
+    console.error("Reset password error:", jwtError);
+    res.status(500).json({ message: "Something went wrong" });
+  }
 });
 
 // ─── Terms ────────────────────────────────────────────────────────────────────
@@ -302,7 +451,7 @@ app.post("/api/students", requireAuth, async (req, res) => {
       : 0;
 
     const student = await prisma.student.create({
-      data: { name, adm, cls: cls || "", fee: parsedFee, paid: parsedPaid, parentEmail: parentEmail || null, parentName: parentName || null, parentPhone: parentPhone || null, daysOverdue, userId: req.userId },
+      data: { name, adm: adm?.trim() || "", cls: cls || "", fee: parsedFee, paid: parsedPaid, parentEmail: parentEmail || null, parentName: parentName || null, parentPhone: parentPhone || null, daysOverdue, userId: req.userId },
     });
 
     if (parsedPaid > 0) {
@@ -531,7 +680,7 @@ app.post("/api/payments/stk", requireAuth, requirePlan("mpesa"), async (req, res
   } catch (e) { console.error("stk:", e); res.status(500).json({ message: "STK push failed" }); }
 });
 
-app.post("/api/mpesa/callback", async (req, res) => {
+app.post("/api/mpesa/callback/:userId", async (req, res) => {
   try {
     const cb = req.body?.Body?.stkCallback;
     if (cb?.ResultCode === 0) {
@@ -557,111 +706,310 @@ app.post("/api/mpesa/callback", async (req, res) => {
 // INVOICES & RECEIPTS
 // ═══════════════════════════════════════════════════════════════════
 
-// ─── Helper: format WhatsApp number ────────────────────────────────────────────
-function toWaNumber(phone) {
+// ─── Helper: format phone for Africa's Talking ────────────────────────────────
+function formatPhoneAT(phone) {
   if (!phone) return null;
-  const digits = phone.replace(/\D/g, "");
-  if (digits.startsWith("254")) return digits;
-  if (digits.startsWith("0"))   return "254" + digits.slice(1);
-  if (digits.startsWith("7") || digits.startsWith("1")) return "254" + digits;
-  return digits;
+  const clean = phone.replace(/\D/g, "");
+  if (clean.startsWith("254")) return "+" + clean;
+  if (clean.startsWith("0"))   return "+254" + clean.slice(1);
+  if (clean.startsWith("7") || clean.startsWith("1")) return "+254" + clean;
+  return "+" + clean;
 }
 
-// ─── Helper: send WhatsApp via Twilio ──────────────────────────────────────────
-// Set env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WA_FROM
-async function sendWhatsApp(to, message) {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const auth  = process.env.TWILIO_AUTH_TOKEN;
-  const from  = process.env.TWILIO_WA_FROM; // e.g. "whatsapp:+14155238886"
-  if (!sid || !auth || !from) throw new Error("WhatsApp provider not configured");
-  const waTo  = `whatsapp:+${toWaNumber(to)}`;
-  const res   = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+// ─── Message Builders ─────────────────────────────────────────────────────────────
+function buildInvoiceMessage({ schoolName, studentName, className, admNo, totalFee, dueDate, termName, note, feeBreakdown }) {
+  const BACKEND = process.env.BACKEND_URL || "https://asayfeeflow.onrender.com";
+  const token = genToken();
+  const link = `${BACKEND}/i/${token}`;
+  const dueFmt = new Date(dueDate).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" });
+  
+  let message = `FeeFlow | ${schoolName}: Fee invoice for ${studentName} (${className}${admNo ? ", Adm: " + admNo : ""}). Due: ${dueFmt}. Amount: KES ${Number(totalFee).toLocaleString()}.`;
+  if (termName) message += ` Term: ${termName}.`;
+  if (note) message += ` Note: ${note}.`;
+  message += ` View invoice: ${link}`;
+  
+  return message;
+}
+
+function buildReceiptMessage({ schoolName, studentName, className, amount, method, receiptId, txnRef }) {
+  const BACKEND = process.env.BACKEND_URL || "https://asayfeeflow.onrender.com";
+  const token = genToken();
+  const link = `${BACKEND}/r/${token}`;
+  const methodFmt = method === "mpesa" ? "M-Pesa" : method === "bank" ? "Bank Transfer" : "Cash";
+  
+  let message = `FeeFlow | ${schoolName}: Payment receipt for ${studentName} (${className}). Amount: KES ${Number(amount).toLocaleString()} via ${methodFmt}.`;
+  if (txnRef) message += ` Ref: ${txnRef}.`;
+  message += ` Download receipt: ${link}`;
+  
+  return message;
+}
+
+// ─── Helper: send SMS via Africa's Talking ──────────────────────────────────────
+async function sendSMS(to, message, user) {
+  // Use centralized Africa's Talking credentials instead of per-user
+  const apiKey = process.env.AT_API_KEY;
+  const username = process.env.AT_USERNAME || "sandbox";
+  const senderId = process.env.AT_SENDER_ID || "FEEFLOW";
+  
+  if (!apiKey) throw new Error("SMS not configured. Contact administrator to set up Africa's Talking credentials.");
+  const phone = formatPhoneAT(to);
+  if (!phone) throw new Error("Invalid phone number");
+  const body = new URLSearchParams({ username, to: phone, message, from: senderId });
+  const res = await fetch("https://api.africastalking.com/version1/messaging", {
     method: "POST",
-    headers: {
-      Authorization: "Basic " + Buffer.from(`${sid}:${auth}`).toString("base64"),
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ From: from, To: waTo, Body: message }),
+    headers: { apiKey, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: body.toString(),
   });
-  if (!res.ok) throw new Error(`WhatsApp send failed: ${res.status}`);
+  const data = await res.json();
+  if (data.SMSMessageData?.Recipients?.[0]?.status !== "Success") {
+    throw new Error("SMS failed: " + JSON.stringify(data));
+  }
+  return data;
+}
+
+// ─── Helper: generate short unique token ─────────────────────────────────────
+function genToken() { return crypto.randomBytes(8).toString("hex"); }
+
+// ─── Helper: send email via Resend ─────────────────────────────────────────────
+async function sendEmail(to, subject, htmlBody, user) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || !to) return; // silently skip if not configured or no email
+  // Resend's test sender (onboarding@resend.dev) can only deliver to the
+  // registered Resend account email. In non-production, override the recipient.
+  const recipient = process.env.NODE_ENV === "production"
+    ? to
+    : (process.env.RESEND_TEST_EMAIL || to);
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: "FeeFlow <onboarding@resend.dev>", to: recipient, subject, html: htmlBody }),
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => String(res.status));
+    throw new Error("Email send failed: " + errBody);
+  }
   return res.json();
 }
 
-// ─── Helper: send email via SendGrid ───────────────────────────────────────────
-// Set env vars: SENDGRID_API_KEY, EMAIL_FROM
-async function sendEmail(to, subject, html) {
-  const key  = process.env.SENDGRID_API_KEY;
-  const from = process.env.EMAIL_FROM || "noreply@feeflow.app";
-  if (!key) throw new Error("Email provider not configured");
-  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: from, name: "FeeFlow" },
-      subject,
-      content: [{ type: "text/html", value: html }],
-    }),
-  });
-  if (!res.ok) throw new Error(`Email send failed: ${res.status}`);
-}
+// ─── Public Invoice & Receipt pages — served as HTML directly from Express ────
+// Parent clicks SMS link → Express serves a complete HTML page → Download button
 
-// ─── Helper: receipt download link ─────────────────────────────────────────────
-function receiptLink(receiptId) {
-  return `${process.env.FRONTEND_URL || "http://localhost:5173"}/receipt/${receiptId}`;
-}
+function fmtKE(n) { return Number(n || 0).toLocaleString("en-KE"); }
+function fmtDateKE(d) { return d ? new Date(d).toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" }) : "—"; }
+function fmtDatetimeKE(d) { return d ? new Date(d).toLocaleString("en-KE", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"; }
 
-// ─── Helper: invoice message text ──────────────────────────────────────────────
-function buildInvoiceMessage({ schoolName, studentName, className, admNo, totalFee, dueDate, termName, note, feeBreakdown }) {
-  const breakdownText = (feeBreakdown || []).map(fb => `  • ${fb.typeName}: KES ${Number(fb.amount).toLocaleString()}`).join("\n");
-  return [
-    `📋 *FEE INVOICE — ${schoolName}*`,
-    ``,
-    `Dear Parent/Guardian,`,
-    ``,
-    `Please find below the fee invoice for your child:`,
-    ``,
-    `👤 *Student:* ${studentName}`,
-    `🎓 *Class:* ${className}`,
-    `🔖 *Adm No:* ${admNo}`,
-    termName ? `📅 *Term:* ${termName}` : null,
-    ``,
-    `*FEE BREAKDOWN:*`,
-    breakdownText || `  • Tuition Fee: KES ${Number(totalFee).toLocaleString()}`,
-    ``,
-    `💰 *Total Due: KES ${Number(totalFee).toLocaleString()}*`,
-    `📆 *Due Date: ${new Date(dueDate).toLocaleDateString("en-KE", { day: "2-digit", month: "long", year: "numeric" })}*`,
-    note ? `\nℹ️ ${note}` : null,
-    ``,
-    `Kindly ensure payment is made before the due date.`,
-    `Thank you — ${schoolName}`,
-  ].filter(l => l !== null).join("\n");
-}
+app.get("/i/:token", async (req, res) => {
+  try {
+    const invoice = await prisma.invoice.findUnique({
+      where: { token: req.params.token },
+      include: { student: true, user: { select: { schoolName: true } } },
+    });
+    if (!invoice) return res.status(404).send(`<!DOCTYPE html><html><body style="font-family:Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f8"><div style="text-align:center;color:#c00"><div style="font-size:48px">❌</div><h2>Invoice not found</h2><p style="color:#666">This link may be invalid or expired.</p></div></body></html>`);
 
-// ─── Helper: receipt message text ──────────────────────────────────────────────
-function buildReceiptMessage({ schoolName, studentName, className, amount, method, receiptId, txnRef }) {
-  const methodLabel = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash", manual: "Manual" };
-  return [
-    `✅ *PAYMENT RECEIPT — ${schoolName}*`,
-    ``,
-    `Dear Parent/Guardian,`,
-    ``,
-    `We have received a payment for:`,
-    ``,
-    `👤 *Student:* ${studentName}`,
-    `🎓 *Class:* ${className}`,
-    `💳 *Method:* ${methodLabel[method] || method}`,
-    txnRef ? `🔖 *Ref:* ${txnRef}` : null,
-    `💰 *Amount: KES ${Number(amount).toLocaleString()}*`,
-    ``,
-    `📥 Download your receipt:`,
-    receiptLink(receiptId),
-    ``,
-    `Thank you — ${schoolName}`,
-  ].filter(l => l !== null).join("\n");
-}
+    const st      = invoice.student;
+    const school  = invoice.user.schoolName || "School";
+    const balance = Math.max(0, st.fee - st.paid);
+    const fb      = Array.isArray(invoice.feeBreakdown) && invoice.feeBreakdown.length > 0
+                      ? invoice.feeBreakdown
+                      : [{ typeName: "Tuition Fee", amount: st.fee }];
 
-// ─── Invoice Routes ─────────────────────────────────────────────────────────────
+    const feeRows = fb.map(f => `
+      <tr style="border-bottom:1px solid #eee">
+        <td style="padding:10px 12px">${f.typeName || f.name || "Fee"}</td>
+        <td style="padding:10px 12px;text-align:right;font-variant-numeric:tabular-nums">${fmtKE(f.amount)}</td>
+      </tr>`).join("");
+
+    const paidRow = st.paid > 0 ? `
+      <tr style="color:#27ae60">
+        <td style="padding:8px 12px;font-weight:600">Amount Paid</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600">KES ${fmtKE(st.paid)}</td>
+      </tr>
+      <tr style="background:${balance > 0 ? "#fff5f5" : "#f0fdf4"}">
+        <td style="padding:9px 12px;font-weight:700;color:${balance > 0 ? "#c00" : "#16a34a"}">Balance Remaining</td>
+        <td style="padding:9px 12px;text-align:right;font-weight:700;color:${balance > 0 ? "#c00" : "#16a34a"}">KES ${fmtKE(balance)}</td>
+      </tr>` : "";
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fee Invoice — ${st.name}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#f0f4f8;min-height:100vh;padding:24px 16px}
+    .wrap{max-width:600px;margin:0 auto}
+    .brand{text-align:center;margin-bottom:20px}
+    .brand .name{font-size:13px;font-weight:700;color:#059669;letter-spacing:1px}
+    .brand .sub{font-size:12px;color:#888;margin-top:2px}
+    .card{background:#fff;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.10);overflow:hidden}
+    .hdr{background:#003366;color:#fff;padding:24px 28px;display:flex;justify-content:space-between;align-items:flex-start}
+    .hdr h1{font-size:20px;font-weight:700;margin-bottom:4px}
+    .hdr .sub{font-size:11px;opacity:.75;letter-spacing:1px;text-transform:uppercase}
+    .hdr .badge{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:4px 12px;border-radius:20px;font-size:11px;margin-top:8px}
+    .body{padding:28px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+    .box{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px}
+    .box .lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+    .box .val{font-size:15px;font-weight:700;color:#003366}
+    .box .inf{font-size:12px;color:#555;margin-top:2px}
+    table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px}
+    thead tr{background:#003366;color:#fff}
+    thead th{padding:10px 12px;text-align:left;font-size:11px;letter-spacing:.5px;font-weight:600}
+    .total-row td{background:#e8f0fe;font-weight:700;font-size:14px;color:#003366;border-top:2px solid #003366;padding:11px 12px}
+    .btn{display:block;width:100%;padding:14px;border-radius:10px;background:#003366;border:none;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:Arial,sans-serif;letter-spacing:.3px;margin-top:4px;text-align:center}
+    .note{background:#f9f9f9;border:1px solid #eee;border-radius:8px;padding:12px 14px;font-size:12px;color:#555;margin-bottom:20px}
+    .footer{margin-top:18px;font-size:11px;color:#aaa;text-align:center;line-height:1.8}
+    @media(max-width:480px){.grid{grid-template-columns:1fr}.hdr{flex-direction:column;gap:12px}}
+    @media print{body{background:#fff;padding:20px}.btn{display:none}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><div class="name">FEEFLOW</div><div class="sub">Fee Management Platform</div></div>
+    <div class="card">
+      <div class="hdr">
+        <div>
+          <h1>${school}</h1>
+          <div class="sub">Official Fee Invoice</div>
+          <div class="badge">PAYMENT DUE</div>
+        </div>
+        <div style="text-align:right;font-size:12px">
+          <div style="opacity:.75">Invoice No.</div>
+          <div style="font-size:15px;font-weight:700">${invoice.invoiceNo}</div>
+          <div style="opacity:.75;margin-top:6px">Issued</div>
+          <div>${fmtDateKE(invoice.createdAt)}</div>
+        </div>
+      </div>
+      <div class="body">
+        <div class="grid">
+          <div class="box">
+            <div class="lbl">Billed To</div>
+            <div class="val">${st.name}</div>
+            <div class="inf">${st.cls}${st.adm ? " · Adm: " + st.adm : ""}</div>
+            ${st.parentName  ? `<div class="inf">Parent: ${st.parentName}</div>` : ""}
+            ${st.parentPhone ? `<div class="inf">📱 ${st.parentPhone}</div>` : ""}
+          </div>
+          <div class="box">
+            <div class="lbl">Payment Due</div>
+            <div class="val" style="color:#c00">${fmtDateKE(invoice.dueDate)}</div>
+            ${invoice.termName ? `<div class="inf">Term: ${invoice.termName}</div>` : ""}
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Description</th><th style="text-align:right">Amount (KES)</th></tr></thead>
+          <tbody>${feeRows}</tbody>
+          <tfoot>
+            <tr class="total-row"><td>Total Due</td><td style="text-align:right;font-variant-numeric:tabular-nums">KES ${fmtKE(st.fee)}</td></tr>
+            ${paidRow}
+          </tfoot>
+        </table>
+        ${invoice.note ? `<div class="note"><strong>Note:</strong> ${invoice.note}</div>` : ""}
+        <button class="btn" onclick="window.print()">⬇ Download / Print Invoice PDF</button>
+        <div class="footer">
+          Please ensure payment is made before the due date.<br>
+          For inquiries, contact ${school} administration.<br>
+          <em>Powered by FeeFlow · Fee Management Platform</em>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  } catch (e) { console.error("invoice page:", e); res.status(500).send("Server error"); }
+});
+
+app.get("/r/:token", async (req, res) => {
+  try {
+    const receipt = await prisma.receipt.findUnique({
+      where: { token: req.params.token },
+      include: { student: true, user: { select: { schoolName: true } } },
+    });
+    if (!receipt) return res.status(404).send(`<!DOCTYPE html><html><body style="font-family:Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f8"><div style="text-align:center;color:#c00"><div style="font-size:48px">❌</div><h2>Receipt not found</h2><p style="color:#666">This link may be invalid.</p></div></body></html>`);
+
+    const st      = receipt.student;
+    const school  = receipt.user.schoolName || "School";
+    const balance = Math.max(0, st.fee - st.paid);
+    const METHOD  = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash", manual: "Cash" };
+    const method  = METHOD[receipt.method] || receipt.method;
+
+    const detailRows = [
+      ["Student",        st.name],
+      st.adm            ? ["Adm. No.",        st.adm]                  : null,
+      ["Class",          st.cls],
+      receipt.termName  ? ["Term",             receipt.termName]        : null,
+      ["Payment Method", method],
+      receipt.txnRef    ? ["Transaction Ref",  receipt.txnRef]          : null,
+      ["Date & Time",    fmtDatetimeKE(receipt.paidAt)],
+    ].filter(Boolean).map(([k, v]) => `
+      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f0f0f0;font-size:13px">
+        <span style="color:#666">${k}</span>
+        <span style="font-weight:600;text-align:right;max-width:60%;${k === "Transaction Ref" ? "font-family:monospace" : ""}">${v}</span>
+      </div>`).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Payment Receipt — ${st.name}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#f0f4f8;min-height:100vh;padding:24px 16px}
+    .wrap{max-width:480px;margin:0 auto}
+    .brand{text-align:center;margin-bottom:20px}
+    .brand .name{font-size:13px;font-weight:700;color:#059669;letter-spacing:1px}
+    .brand .sub{font-size:12px;color:#888;margin-top:2px}
+    .card{background:#fff;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.10);overflow:hidden}
+    .hdr{background:#059669;color:#fff;padding:22px 24px;text-align:center}
+    .hdr h1{font-size:16px;font-weight:700;letter-spacing:1px}
+    .hdr .sub{font-size:11px;opacity:.8;margin-top:3px;letter-spacing:1px;text-transform:uppercase}
+    .body{padding:24px}
+    .rec-no{text-align:center;font-size:12px;color:#888;margin-bottom:18px}
+    .amount-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px;text-align:center;margin-bottom:20px}
+    .amount-box .lbl{font-size:11px;color:#16a34a;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+    .amount-box .val{font-size:30px;font-weight:800;color:#16a34a;font-variant-numeric:tabular-nums}
+    .btn{display:block;width:100%;padding:14px;border-radius:10px;background:#059669;border:none;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:Arial,sans-serif;letter-spacing:.3px;margin-top:18px;text-align:center}
+    .footer{margin-top:16px;font-size:11px;color:#aaa;text-align:center;line-height:1.8}
+    @media print{body{background:#fff;padding:20px}.btn{display:none}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><div class="name">FEEFLOW</div><div class="sub">Fee Management Platform</div></div>
+    <div class="card">
+      <div class="hdr">
+        <h1>${school}</h1>
+        <div class="sub">Official Payment Receipt</div>
+      </div>
+      <div class="body">
+        <div class="rec-no">Receipt No: <strong style="color:#333;font-family:monospace">${receipt.receiptNo}</strong></div>
+        <div class="amount-box">
+          <div class="lbl">Amount Received</div>
+          <div class="val">KES ${fmtKE(receipt.amount)}</div>
+        </div>
+        ${detailRows}
+        <div style="margin-top:14px;padding:11px 14px;border-radius:9px;background:${balance > 0 ? "#fff5f5" : "#f0fdf4"};border:1px solid ${balance > 0 ? "#fecaca" : "#bbf7d0"};display:flex;justify-content:space-between;font-weight:700;font-size:13px">
+          <span style="color:${balance > 0 ? "#c00" : "#16a34a"}">Outstanding Balance</span>
+          <span style="color:${balance > 0 ? "#c00" : "#16a34a"}">${balance > 0 ? "KES " + fmtKE(balance) : "Cleared ✓"}</span>
+        </div>
+        <button class="btn" onclick="window.print()">⬇ Download / Print Receipt PDF</button>
+        <div class="footer">
+          Thank you for your payment · ${school}<br>
+          <em>Powered by FeeFlow · Fee Management Platform</em>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  } catch (e) { console.error("receipt page:", e); res.status(500).send("Server error"); }
+});
+
 
 // GET /api/invoices
 app.get("/api/invoices", requireAuth, async (req, res) => {
@@ -672,83 +1020,6 @@ app.get("/api/invoices", requireAuth, async (req, res) => {
     });
     res.json(invoices);
   } catch (e) { res.status(500).json({ message: "Failed to fetch invoices" }); }
-});
-
-// POST /api/invoices
-app.post("/api/invoices", requireAuth, requirePlan("invoices"), async (req, res) => {
-  const { studentIds, dueDate, scheduledFor, channels, note, termName } = req.body;
-  if (!studentIds?.length) return res.status(400).json({ message: "No students selected" });
-  if (!dueDate)            return res.status(400).json({ message: "Due date is required" });
-  if (!channels?.length)   return res.status(400).json({ message: "Select at least one channel" });
-
-  try {
-    const user     = await prisma.user.findUnique({ where: { id: req.userId } });
-    const students = await prisma.student.findMany({ where: { id: { in: studentIds }, userId: req.userId } });
-    const now      = new Date();
-    const sendNow  = !scheduledFor || new Date(scheduledFor) <= now;
-
-    const created = [];
-    for (const student of students) {
-      const recentPayments = await prisma.payment.findMany({ where: { studentId: student.id }, orderBy: { createdAt: "desc" }, take: 1 });
-      const feeBreakdown   = recentPayments[0]?.feeBreakdown || [];
-
-      const invoice = await prisma.invoice.create({
-        data: {
-          userId:       req.userId,
-          studentId:    student.id,
-          studentName:  student.name,
-          admNo:        student.adm,
-          className:    student.cls,
-          totalFee:     student.fee,
-          paid:         student.paid,
-          balance:      Math.max(0, student.fee - student.paid),
-          dueDate:      new Date(dueDate),
-          scheduledFor: scheduledFor ? new Date(scheduledFor) : null,
-          channels,
-          termName:     termName || null,
-          note:         note || null,
-          feeBreakdown,
-          status:       sendNow ? "pending" : "scheduled",
-          parentPhone:  student.parentPhone || null,
-          parentName:   student.parentName  || null,
-        },
-      });
-      created.push(invoice);
-
-      if (sendNow) {
-        const message = buildInvoiceMessage({
-          schoolName:   user.schoolName || "School",
-          studentName:  student.name,
-          className:    student.cls,
-          admNo:        student.adm,
-          totalFee:     student.fee,
-          dueDate,
-          termName,
-          note,
-          feeBreakdown,
-        });
-
-        let allOk = true;
-        if (channels.includes("whatsapp") && student.parentPhone) {
-          try { await sendWhatsApp(student.parentPhone, message); }
-          catch { allOk = false; }
-        }
-        if (channels.includes("email") && (student.parentEmail || student.email)) {
-          const emailTo = student.parentEmail || student.email;
-          try {
-            await sendEmail(emailTo, `Fee Invoice — ${student.name} (${user.schoolName || "School"})`, `<pre style="font-family:sans-serif;white-space:pre-wrap">${message}</pre>`);
-          } catch { allOk = false; }
-        }
-
-        await prisma.invoice.update({ where: { id: invoice.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
-      }
-    }
-
-    res.json({ created: created.length, scheduled: !sendNow });
-  } catch (e) {
-    console.error("Invoice creation error:", e);
-    res.status(500).json({ message: "Failed to create invoices" });
-  }
 });
 
 // POST /api/invoices/:id/resend
@@ -775,8 +1046,8 @@ app.post("/api/invoices/:id/resend", requireAuth, requirePlan("invoices"), async
 
     let allOk = true;
     const channels = invoice.channels || [];
-    if (channels.includes("whatsapp") && student.parentPhone) {
-      try { await sendWhatsApp(student.parentPhone, message); } catch { allOk = false; }
+    if (student.parentPhone) {
+      try { await sendSMS(student.parentPhone, message, user); } catch { allOk = false; }
     }
     await prisma.invoice.update({ where: { id: invoice.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
     res.json({ ok: allOk });
@@ -821,7 +1092,7 @@ app.post("/api/receipts/manual", requireAuth, async (req, res) => {
         method:      payment.method,
         txnRef:      payment.txnRef || null,
         paidAt:      payment.createdAt,
-        channels:    channels || ["whatsapp"],
+        channels:    channels || ["sms"],
         type:        "manual",
         balance:     Math.max(0, student.fee - student.paid),
         status:      "pending",
@@ -838,15 +1109,15 @@ app.post("/api/receipts/manual", requireAuth, async (req, res) => {
       txnRef:      payment.txnRef,
     });
 
+    const selectedChannels = Array.isArray(channels) ? channels : [channels].filter(Boolean);
     let allOk = true;
-    const ch  = channels || ["whatsapp"];
-    if (ch.includes("whatsapp") && student.parentPhone) {
-      try { await sendWhatsApp(student.parentPhone, message); }
-      catch (e) { console.error("WhatsApp send failed:", e.message); allOk = false; }
+    if (student.parentPhone) {
+      try { await sendSMS(student.parentPhone, message, user); }
+      catch (e) { console.error("Receipt SMS send failed:", e.message); allOk = false; }
     }
-    if (ch.includes("email") && (student.parentEmail || student.email)) {
+    if (selectedChannels.includes("email") && (student.parentEmail || student.email)) {
       try { await sendEmail(student.parentEmail || student.email, `Payment Receipt — ${student.name}`, `<pre style="font-family:sans-serif;white-space:pre-wrap">${message}</pre>`); }
-      catch (e) { console.error("Email send failed:", e.message); allOk = false; }
+      catch (e) { console.error("Receipt email send failed:", e.message); allOk = false; }
     }
 
     await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
@@ -877,8 +1148,8 @@ app.post("/api/receipts/:id/resend", requireAuth, async (req, res) => {
     });
 
     let allOk = true;
-    if ((receipt.channels || []).includes("whatsapp") && student.parentPhone) {
-      try { await sendWhatsApp(student.parentPhone, message); } catch { allOk = false; }
+    if (student.parentPhone) {
+      try { await sendSMS(student.parentPhone, message, user); } catch { allOk = false; }
     }
     await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
     res.json({ ok: allOk });
@@ -900,7 +1171,7 @@ async function autoSendReceipt({ payment, student, user }) {
         method:      payment.method,
         txnRef:      payment.txnRef || null,
         paidAt:      payment.createdAt,
-        channels:    ["whatsapp"],
+        channels:    ["sms", "email"],
         type:        "auto",
         balance:     Math.max(0, student.fee - student.paid),
         status:      "pending",
@@ -917,10 +1188,17 @@ async function autoSendReceipt({ payment, student, user }) {
       txnRef:      payment.txnRef,
     });
 
+    let allOk = true;
     if (student.parentPhone) {
-      await sendWhatsApp(student.parentPhone, message);
-      await prisma.receipt.update({ where: { id: receipt.id }, data: { status: "sent", sentAt: new Date() } });
+      try { await sendSMS(student.parentPhone, message, user); }
+      catch (e) { console.error("Auto-receipt SMS failed:", e.message); allOk = false; }
     }
+    if (student.parentEmail || student.email) {
+      try { await sendEmail(student.parentEmail || student.email, `Payment Receipt — ${student.name}`, `<pre style="font-family:sans-serif;white-space:pre-wrap">${message}</pre>`); }
+      catch (e) { console.error("Auto-receipt email failed:", e.message); allOk = false; }
+    }
+
+    await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
   } catch (e) {
     console.error("Auto-receipt failed:", e.message);
   }
@@ -954,8 +1232,8 @@ setInterval(async () => {
 
       let allOk = true;
       const channels = invoice.channels || [];
-      if (channels.includes("whatsapp") && student.parentPhone) {
-        try { await sendWhatsApp(student.parentPhone, message); } catch { allOk = false; }
+      if (student.parentPhone) {
+        try { await sendSMS(student.parentPhone, message, user); } catch { allOk = false; }
       }
       if (channels.includes("email") && (student.parentEmail || student.email)) {
         try { await sendEmail(student.parentEmail || student.email, `Fee Invoice — ${student.name}`, `<pre>${message}</pre>`); }
@@ -972,6 +1250,61 @@ setInterval(async () => {
 
 // ─── Health & fallbacks ────────────────────────────────────────────────────────
 app.get("/health", (_, res) => res.json({ ok: true, version: "2.4", env: process.env.NODE_ENV }));
+app.post("/api/invoices", requireAuth, requirePlan("invoices"), async (req, res) => {
+  const { studentIds, dueDate, termName, note, feeBreakdown, sendDate, channels } = req.body;
+  if (!studentIds?.length) return res.status(400).json({ message: "Select at least one student" });
+  if (!dueDate)            return res.status(400).json({ message: "Due date is required" });
+  try {
+    const user     = await prisma.user.findUnique({ where: { id: req.userId } });
+    const students = await prisma.student.findMany({ where: { id: { in: studentIds }, userId: req.userId } });
+    const BACKEND  = process.env.BACKEND_URL  || "https://asayfeeflow.onrender.com";
+    const results  = [];
+    let   sentOk = 0, smsFail = 0;
+
+    for (const student of students) {
+      const token     = genToken();
+      const invoiceNo = await nextInvoiceNo(req.userId);
+      const invoice   = await prisma.invoice.create({
+        data: {
+          invoiceNo, token, studentId: student.id, userId: req.userId,
+          dueDate: new Date(dueDate), termName: termName || null,
+          feeBreakdown: feeBreakdown || [], note: note || null,
+          channels: channels || ["sms"], status: sendDate ? "scheduled" : "sent",
+          scheduledFor: sendDate ? new Date(sendDate) : null,
+          sentAt: sendDate ? null : new Date(),
+        },
+      });
+      results.push(invoice);
+
+      if (!sendDate && student.parentPhone) {
+        const link    = `${BACKEND}/i/${token}`;
+        const balance = Math.max(0, student.fee - student.paid);
+        const dueFmt  = new Date(dueDate).toLocaleDateString("en-KE", { day:"numeric", month:"short", year:"numeric" });
+        const message = `FeeFlow | ${user.schoolName || "School"}: Fee invoice for ${student.name} (${student.cls}). Due: ${dueFmt}. Balance: KES ${balance.toLocaleString()}. View invoice: ${link}`;
+        try {
+          await sendSMS(student.parentPhone, message, user);
+          sentOk++;
+        } catch (e) { console.error("Invoice SMS:", student.name, e.message); smsFail++; }
+      }
+
+      // Email if channel includes "email" and parent has email
+      const selectedChannels = Array.isArray(channels) ? channels : [channels].filter(Boolean);
+      if (!sendDate && selectedChannels.includes("email") && (student.parentEmail || student.email) && process.env.RESEND_API_KEY) {
+        const link = `${BACKEND}/i/${token}`;
+        try {
+          await sendEmail(student.parentEmail || student.email, `Fee Invoice — ${student.name} | ${termName || ""}`,
+            `<p>Dear Parent/Guardian,</p><p>Please find your fee invoice for <strong>${student.name}</strong>.</p><p><a href="${link}" style="background:#003366;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin-top:12px">View &amp; Download Invoice →</a></p><p style="color:#888;font-size:12px;margin-top:20px">Sent by ${user.schoolName || "School"} via FeeFlow</p>`,
+            user
+          );
+        } catch (e) { console.error("Invoice email:", e.message); }
+      }
+    }
+    res.json({ invoices: results, sent: sentOk, failed: smsFail, scheduled: !!sendDate });
+  } catch (e) { console.error("create invoices:", e); res.status(500).json({ message: "Something went wrong" }); }
+});
+
+
+// ─── Health & fallbacks ────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ message: "Route not found" }));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ message: "Internal server error" }); });
 

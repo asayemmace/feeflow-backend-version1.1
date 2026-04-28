@@ -287,21 +287,148 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
   );
 }
 
-// ─── Past Terms Panel ──────────────────────────────────────────────────────────
+// ─── Past Terms Panel — frontend PDF generation ───────────────────────────────
 function PastTermsPanel({ onClose }) {
-  const { token } = useAuth();
-  const allTerms  = useAppStore(s => s.terms);
+  const { token, user } = useAuth();
+  const allTerms        = useAppStore(s => s.terms);
   const [downloading, setDownloading] = useState(null);
 
-  const download = async (term, format) => {
-    setDownloading(`${term.id}-${format}`);
+  const schoolName = user?.schoolName || "School";
+
+  const fetchTermData = async (term) => {
+    const h = { Authorization: `Bearer ${token}` };
+    const [studRes, payRes] = await Promise.all([
+      axios.get(`${API}/api/students`, { headers: h }),
+      axios.get(`${API}/api/payments`, { headers: h }),
+    ]);
+    const students = studRes.data || [];
+    const payments = payRes.data || [];
+
+    const termStart = new Date(term.startDate).getTime();
+    const termEnd   = new Date(term.endDate).getTime() + 86400000;
+    const termPayments = payments.filter(p => {
+      const t = new Date(p.paidAt || p.createdAt).getTime();
+      return t >= termStart && t <= termEnd;
+    });
+
+    const totalCollected = termPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const totalExpected  = students.reduce((s, st) => s + (st.fee || 0), 0);
+
+    const paidMap = {};
+    termPayments.forEach(p => { paidMap[p.studentId] = (paidMap[p.studentId] || 0) + (p.amount || 0); });
+
+    const paid    = students.filter(s => (paidMap[s.id] || 0) >= s.fee && s.fee > 0);
+    const partial = students.filter(s => (paidMap[s.id] || 0) > 0 && (paidMap[s.id] || 0) < s.fee);
+    const unpaid  = students.filter(s => !(paidMap[s.id] || 0));
+
+    return { students, totalCollected, totalExpected, paid, partial, unpaid, paidMap };
+  };
+
+  const generatePDF = (term, data) => {
+    const { totalCollected, totalExpected, paid, partial, unpaid, paidMap } = data;
+    const pct = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0;
+    const fmt = n => `KES ${Number(n || 0).toLocaleString()}`;
+    const fmtD = d => d ? new Date(d).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" }) : "—";
+    const barColor = pct >= 80 ? "#22c55e" : pct >= 50 ? "#f59e0b" : "#ef4444";
+
+    const tableRows = (list, showPaid = false) => list.map(s => `
+      <tr>
+        <td>${s.name}</td>
+        <td>${s.adm || "—"}</td>
+        <td>${s.cls}</td>
+        <td>${s.parentName || "—"}</td>
+        <td>${s.parentPhone || "—"}</td>
+        <td style="font-weight:600;color:${showPaid ? "#f59e0b" : "#ef4444"}">${showPaid ? `${fmt(paidMap[s.id] || 0)} / ${fmt(s.fee)}` : fmt(s.fee)}</td>
+      </tr>`).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${term.name} — Term Report</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;color:#1a1a2e;padding:40px;font-size:13px}
+    .hdr{background:#003366;color:#fff;padding:24px 28px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}
+    .hdr h1{font-size:22px;margin-bottom:4px}.hdr .sub{font-size:12px;opacity:.75}
+    .hdr .badge{font-size:11px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:4px 12px;border-radius:20px;margin-top:6px;display:inline-block}
+    .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px}
+    .box{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px}
+    .box .val{font-size:22px;font-weight:700;color:#003366}.box .lbl{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.8px;margin-top:4px}
+    .progress-wrap{margin-bottom:28px}.progress-lbl{font-size:12px;color:#555;margin-bottom:6px}
+    .progress-bar{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden}
+    .progress-fill{height:100%;background:${barColor};border-radius:4px;width:${pct}%}
+    .sec{font-size:13px;font-weight:700;color:#003366;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #003366}
+    table{width:100%;border-collapse:collapse;margin-bottom:28px;font-size:12.5px}
+    thead tr{background:#003366;color:#fff}
+    thead th{padding:10px 12px;text-align:left;font-weight:600;font-size:11px;letter-spacing:.5px}
+    tbody tr:nth-child(even){background:#f7f9fc}
+    tbody td{padding:9px 12px;border-bottom:1px solid #e8ecf0;color:#333}
+    .footer{margin-top:36px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:14px}
+    @media print{body{padding:20px}}
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div>
+      <h1>${schoolName}</h1>
+      <div class="sub">End of Term Report — ${term.name}</div>
+      <div class="badge">${fmtD(term.startDate)} → ${fmtD(term.endDate)}</div>
+    </div>
+    <div style="text-align:right;font-size:12px;opacity:.85">
+      Generated: ${new Date().toLocaleDateString("en-KE", { day:"numeric", month:"long", year:"numeric" })}
+    </div>
+  </div>
+
+  <div class="grid4">
+    <div class="box"><div class="val">${fmt(totalCollected)}</div><div class="lbl">Total Collected</div></div>
+    <div class="box"><div class="val">${fmt(totalExpected)}</div><div class="lbl">Total Expected</div></div>
+    <div class="box"><div class="val">${paid.length} / ${paid.length + partial.length + unpaid.length}</div><div class="lbl">Students Fully Paid</div></div>
+    <div class="box"><div class="val">${pct}%</div><div class="lbl">Collection Rate</div></div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-lbl">Collection progress — ${pct}% of expected fees collected</div>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+  </div>
+
+  <div class="grid3">
+    <div class="box"><div class="val" style="color:#22c55e">${paid.length}</div><div class="lbl">Fully Paid</div></div>
+    <div class="box"><div class="val" style="color:#f59e0b">${partial.length}</div><div class="lbl">Partial Payment</div></div>
+    <div class="box"><div class="val" style="color:#ef4444">${unpaid.length}</div><div class="lbl">No Payment</div></div>
+  </div>
+
+  ${unpaid.length > 0 ? `
+  <div class="sec">Unpaid Students (${unpaid.length})</div>
+  <table>
+    <thead><tr><th>Student Name</th><th>Adm No.</th><th>Class</th><th>Parent Name</th><th>Parent Phone</th><th>Fee Due</th></tr></thead>
+    <tbody>${tableRows(unpaid, false)}</tbody>
+  </table>` : `<p style="color:#22c55e;margin-bottom:24px;font-size:14px">🎉 All students have paid their fees this term!</p>`}
+
+  ${partial.length > 0 ? `
+  <div class="sec">Partial Payments (${partial.length})</div>
+  <table>
+    <thead><tr><th>Student Name</th><th>Adm No.</th><th>Class</th><th>Parent Name</th><th>Parent Phone</th><th>Paid / Total</th></tr></thead>
+    <tbody>${tableRows(partial, true)}</tbody>
+  </table>` : ""}
+
+  <div class="footer">${schoolName} · ${term.name} · Generated by FeeFlow · All rights reserved</div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => setTimeout(() => win.print(), 500);
+  };
+
+  const handleDownload = async (term) => {
+    setDownloading(term.id);
     try {
-      const res = await axios.get(`${API}/api/terms/${term.id}/export?format=${format}`, { headers: { Authorization: `Bearer ${token}` }, responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      const a   = document.createElement("a");
-      a.href = url; a.download = `${term.name.replace(/\s+/g, "_")}.${format === "excel" ? "xlsx" : "pdf"}`; a.click();
-      URL.revokeObjectURL(url);
-    } catch { alert("Export failed."); }
+      const data = await fetchTermData(term);
+      generatePDF(term, data);
+    } catch (e) { console.error(e); alert("Failed to generate report."); }
     finally { setDownloading(null); }
   };
 
@@ -312,41 +439,42 @@ function PastTermsPanel({ onClose }) {
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(3px)" }} />
       <div style={{ position: "fixed", top: "50%", left: "50%", zIndex: 50, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 520, background: "#111827", border: "1px solid #1e2d47", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", overflow: "hidden", maxHeight: "80vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #1e2d47", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 16, fontWeight: 600, color: "#e8edf5", fontFamily: "'DM Serif Display',serif" }}>Past Terms</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "#e8edf5", fontFamily: "'DM Serif Display',serif" }}>Past Terms</div>
+            <div style={{ fontSize: 12, color: "#4a5f80", marginTop: 2 }}>Download end-of-term PDF report per term</div>
+          </div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: "transparent", border: "1px solid #1e2d47", color: "#8a9dbf", cursor: "pointer", fontSize: 16 }}>×</button>
         </div>
         <div style={{ padding: "16px 24px", overflowY: "auto", flex: 1 }}>
           {closed.length === 0
             ? <div style={{ textAlign: "center", padding: "32px 0", fontSize: 13, color: "#4a5f80" }}>No past terms yet.</div>
             : closed.map(term => (
-              <div key={term.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", borderBottom: "1px solid #1e2d47" }}>
+              <div key={term.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 0", borderBottom: "1px solid #1e2d47" }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 500, color: "#e8edf5" }}>{term.name}</div>
                   <div style={{ fontSize: 11.5, color: "#4a5f80", marginTop: 2 }}>
                     {new Date(term.startDate).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" })} → {new Date(term.endDate).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" })}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {["excel", "pdf"].map(f => (
-                    <button key={f} onClick={() => download(term, f)} disabled={downloading === `${term.id}-${f}`}
-                      style={{ padding: "6px 12px", borderRadius: 7, fontSize: 11.5, fontWeight: 600, background: f === "excel" ? "rgba(34,211,164,0.08)" : "rgba(59,130,246,0.08)", border: `1px solid ${f === "excel" ? "rgba(34,211,164,0.2)" : "rgba(59,130,246,0.2)"}`, color: f === "excel" ? "#22d3a4" : "#3b82f6", cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
-                      {downloading === `${term.id}-${f}` ? "…" : f.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
+                <button onClick={() => handleDownload(term)} disabled={downloading === term.id}
+                  style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: downloading === term.id ? "rgba(74,95,128,0.1)" : "rgba(59,130,246,0.08)", border: `1px solid ${downloading === term.id ? "#2a3f62" : "rgba(59,130,246,0.2)"}`, color: downloading === term.id ? "#4a5f80" : "#3b82f6", cursor: downloading === term.id ? "not-allowed" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6 }}>
+                  {downloading === term.id ? "⏳ Generating…" : "📄 Download PDF Report"}
+                </button>
               </div>
             ))
           }
+        </div>
+        <div style={{ padding: "12px 24px", borderTop: "1px solid #1e2d47", fontSize: 11.5, color: "#4a5f80", lineHeight: 1.5 }}>
+          💡 Opens in a new tab. Use <strong style={{ color: "#8a9dbf" }}>Ctrl+P / Cmd+P</strong> → Save as PDF.
         </div>
       </div>
     </>
   );
 }
-
 // ─── Dashboard Page ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   const activeTerm     = useAppStore(s => s.activeTerm);
   const stats          = useAppStore(s => s.stats);
@@ -377,7 +505,7 @@ export default function Dashboard() {
   if (!activeTerm) {
     return (
       <div className="content">
-        <div className="topbar"><div><div className="topbar-title">Dashboard</div></div></div>
+        <div className="topbar"><div><div className="topbar-title">{user?.schoolName || "Dashboard"}</div></div></div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 20 }}>
           <div style={{ fontSize: 48 }}>🏫</div>
           <div style={{ fontSize: 20, fontFamily: "'DM Serif Display',serif", color: "var(--text)" }}>Welcome to FeeFlow</div>
@@ -398,7 +526,7 @@ export default function Dashboard() {
     <div className="content">
       <div className="topbar">
         <div>
-          <div className="topbar-title">Dashboard</div>
+          <div className="topbar-title">{user?.schoolName || "Dashboard"}</div>
           <div className="topbar-sub">{activeTerm.name} &nbsp;·&nbsp; Week {curWeek} of {totalWeeks}</div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>

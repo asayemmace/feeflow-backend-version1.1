@@ -16,8 +16,13 @@ model User {
   phone            String?
   schoolName       String?
   plan             String             @default("free")
-  planExpiry       DateTime?
-  createdAt        DateTime           @default(now())
+  planExpiry          DateTime?
+  mpesaConsumerKey    String?
+  mpesaConsumerSecret String?
+  mpesaShortcode      String?
+  mpesaPasskey        String?
+  mpesaConfigured     Boolean            @default(false)
+  createdAt           DateTime           @default(now())
   students         Student[]
   payments         Payment[]
   terms            Term[]
@@ -29,7 +34,11 @@ model User {
 model Student {
   id          String    @id @default(uuid())
   name        String
+<<<<<<< HEAD
   adm         String    @@unique([userId, adm])
+=======
+  adm         String    @default("")
+>>>>>>> b8f9cd6 (update)
   cls         String    @default("")
   fee         Float     @default(0)
   paid        Float     @default(0)
