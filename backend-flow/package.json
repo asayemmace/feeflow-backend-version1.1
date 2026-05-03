@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "postinstall": "prisma generate",
-    "start": "prisma db push --accept-data-loss && node server.js",
+    "start": "prisma migrate deploy && node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
