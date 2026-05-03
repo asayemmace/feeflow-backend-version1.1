@@ -414,8 +414,13 @@ export default function AppLayout() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { user, token, plan } = useAuth();
-  const bootstrap = useAppStore(s => s.bootstrap);
-  const loaded    = useAppStore(s => s.termsLoaded);
+  const bootstrap    = useAppStore(s => s.bootstrap);
+  const loaded       = useAppStore(s => s.termsLoaded);
+  // Guard flag — prevents a streaming-bootstrap re-render from triggering a second call
+  const bootstrapped = useRef(false);
+  // Expose bootstrap via window so ImportStudentsModal can re-fetch after import
+  // This is simpler than prop-drilling through every page
+  useEffect(() => { window.__ffBootstrap = () => bootstrap(token); }, [token, bootstrap]);
 
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen,  setSidebarOpen]  = useState(false);
@@ -423,8 +428,11 @@ export default function AppLayout() {
   const pm = PLAN_META[plan] || PLAN_META.free;
 
   useEffect(() => {
-    if (token && !loaded) bootstrap(token);
-  }, [token, loaded, bootstrap]);
+    if (token && !bootstrapped.current) {
+      bootstrapped.current = true;
+      bootstrap(token);
+    }
+  }, [token, bootstrap]);
 
   useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
 

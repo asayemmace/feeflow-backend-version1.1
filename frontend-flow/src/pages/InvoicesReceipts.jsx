@@ -4,8 +4,10 @@ import { useAuth } from "../contexts/AuthContext";
 import { useOutletContext } from "react-router-dom";
 import Topbar from "../components/TopBar";
 import useAppStore from "../store/useAppStore";
+import Pagination from "../components/Pagination";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const PAGE_SIZE = 50;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(n) { return Number(n || 0).toLocaleString(); }
@@ -69,6 +71,115 @@ function ChannelBadge({ channels }) {
 
 // ─── Invoice PDF Preview ──────────────────────────────────────────────────────
 function InvoicePreview({ invoice, school, onClose }) {
+
+  const handlePrint = () => {
+    const fb = invoice.feeBreakdown?.length
+      ? invoice.feeBreakdown
+      : [{ typeName: "Tuition Fee", amount: invoice.totalFee }];
+
+    const feeRows = fb.map(f => `
+      <tr>
+        <td style="padding:9px 12px;border-bottom:1px solid #eee">${f.typeName || "Fee"}</td>
+        <td style="padding:9px 12px;border-bottom:1px solid #eee;text-align:right;font-variant-numeric:tabular-nums">${fmt(f.amount)}</td>
+      </tr>`).join("");
+
+    const paidRows = invoice.paid > 0 ? `
+      <tr>
+        <td style="padding:6px 12px;color:#27ae60;font-weight:600">Amount Paid</td>
+        <td style="padding:6px 12px;text-align:right;color:#27ae60;font-weight:600;font-variant-numeric:tabular-nums">KES ${fmt(invoice.paid)}</td>
+      </tr>
+      <tr style="background:${invoice.balance > 0 ? "#fff5f5" : "#f0fff4"}">
+        <td style="padding:8px 12px;font-weight:700;color:${invoice.balance > 0 ? "#c00" : "#27ae60"}">Balance Remaining</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:700;color:${invoice.balance > 0 ? "#c00" : "#27ae60"};font-variant-numeric:tabular-nums">KES ${fmt(invoice.balance)}</td>
+      </tr>` : "";
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice — ${invoice.studentName}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;color:#1a1a2e;padding:36px;font-size:13px;max-width:600px;margin:0 auto}
+    .hdr{background:#003366;color:#fff;padding:22px 26px;border-radius:8px;display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .hdr h1{font-size:20px;font-weight:700;margin-bottom:3px}
+    .hdr .sub{font-size:11px;opacity:.75;letter-spacing:1px;text-transform:uppercase}
+    .hdr .badge{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:3px 10px;border-radius:20px;font-size:10px;margin-top:6px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:22px}
+    .box{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .box .lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px}
+    .box .val{font-size:14px;font-weight:700;color:#003366}
+    .box .inf{font-size:12px;color:#555;margin-top:2px}
+    table{width:100%;border-collapse:collapse;margin-bottom:18px;font-size:13px}
+    thead tr{background:#003366;color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    thead th{padding:9px 12px;text-align:left;font-weight:600;font-size:11px;letter-spacing:.5px}
+    .total-row{background:#e8f0fe;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .total-row td{font-weight:700;font-size:14px;color:#003366;border-top:2px solid #003366;padding:10px 12px}
+    .note{background:#f9f9f9;border:1px solid #eee;border-radius:8px;padding:12px 14px;font-size:12px;color:#555;margin-bottom:18px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .footer{font-size:11px;color:#888;border-top:1px solid #eee;padding-top:12px;line-height:1.7;margin-top:4px}
+    @media print{
+      body{padding:20px}
+      *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+    }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div>
+      <h1>${school || "School"}</h1>
+      <div class="sub">Official Fee Invoice</div>
+      <div class="badge">PAYMENT DUE</div>
+    </div>
+    <div style="text-align:right;font-size:12px">
+      <div style="opacity:.75">Invoice No.</div>
+      <div style="font-size:14px;font-weight:700">${invoice.invoiceNo || "—"}</div>
+      <div style="opacity:.75;margin-top:5px">Issued</div>
+      <div>${fmtDate(invoice.issuedAt || invoice.createdAt || new Date())}</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="box">
+      <div class="lbl">Billed To</div>
+      <div class="val">${invoice.studentName}</div>
+      <div class="inf">${invoice.className}${invoice.admNo ? " · Adm: " + invoice.admNo : ""}</div>
+      ${invoice.parentName  ? `<div class="inf">Parent: ${invoice.parentName}</div>` : ""}
+      ${invoice.parentPhone ? `<div class="inf">Phone: ${invoice.parentPhone}</div>` : ""}
+    </div>
+    <div class="box">
+      <div class="lbl">Payment Due</div>
+      <div class="val" style="color:#c00">${fmtDate(invoice.dueDate)}</div>
+      ${invoice.termName ? `<div class="inf">Term: ${invoice.termName}</div>` : ""}
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Description</th><th style="text-align:right">Amount (KES)</th></tr></thead>
+    <tbody>${feeRows}</tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>Total Due</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">KES ${fmt(invoice.totalFee)}</td>
+      </tr>
+      ${paidRows}
+    </tfoot>
+  </table>
+
+  ${invoice.note ? `<div class="note"><strong>Note:</strong> ${invoice.note}</div>` : ""}
+
+  <div class="footer">
+    Please ensure payment is made before the due date. For inquiries, contact ${school || "the school"} administration.<br>
+    <em>Generated by FeeFlow · Fee Management Platform</em>
+  </div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => setTimeout(() => win.print(), 400);
+  };
+
   return (
     <>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }} />
@@ -152,7 +263,7 @@ function InvoicePreview({ invoice, school, onClose }) {
         {/* Actions */}
         <div style={{ padding: "14px 24px", borderTop: "1px solid #eee", display: "flex", justifyContent: "flex-end", gap: 10, background: "#fafafa", borderRadius: "0 0 14px 14px" }}>
           <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, background: "transparent", border: "1px solid #ddd", fontSize: 13, cursor: "pointer" }}>Close</button>
-          <button onClick={() => window.print()} style={{ padding: "9px 18px", borderRadius: 8, background: "#111", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Print / Save PDF</button>
+          <button onClick={handlePrint} style={{ padding: "9px 18px", borderRadius: 8, background: "#003366", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>⬇ Download / Print PDF</button>
         </div>
       </div>
       <style>{`@keyframes modalIn{from{opacity:0;transform:translate(-50%,-48%)}to{opacity:1;transform:translate(-50%,-50%)}}`}</style>
@@ -167,39 +278,52 @@ function ReceiptPreview({ receipt, school, onClose }) {
 
   const handlePrint = () => {
     const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Receipt</title>
+<html lang="en"><head><meta charset="UTF-8"><title>Receipt — ${receipt.studentName}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Arial,sans-serif;color:#1a1a2e;padding:40px;font-size:13px;max-width:480px;margin:0 auto}
-.hdr{background:#059669;color:#fff;padding:20px 24px;border-radius:8px;text-align:center;margin-bottom:22px}
-.hdr h1{font-size:16px;font-weight:700;letter-spacing:1px}.hdr .sub{font-size:11px;opacity:.8;margin-top:3px;letter-spacing:1px;text-transform:uppercase}
+.hdr{background:#059669;color:#fff;padding:20px 24px;border-radius:8px;text-align:center;margin-bottom:22px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.hdr h1{font-size:16px;font-weight:700;letter-spacing:1px}
+.hdr .sub{font-size:11px;opacity:.8;margin-top:3px;letter-spacing:1px;text-transform:uppercase}
 .rec-no{text-align:center;font-size:12px;color:#888;margin-bottom:18px}
-.amount-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px;text-align:center;margin-bottom:20px}
+.amount-box{background:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;padding:18px;text-align:center;margin-bottom:20px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .amount-box .lbl{font-size:11px;color:#16a34a;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
 .amount-box .val{font-size:28px;font-weight:800;color:#16a34a}
 .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:12.5px}
-.row .lbl{color:#666}.row .val{font-weight:600;text-align:right;max-width:60%}
-.bal{border-radius:8px;padding:10px 14px;margin-top:14px;display:flex;justify-content:space-between;font-weight:700;font-size:13px}
+.row .lbl{color:#666}
+.row .val{font-weight:600;text-align:right;max-width:60%}
+.bal{border-radius:8px;padding:10px 14px;margin-top:14px;display:flex;justify-content:space-between;font-weight:700;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .footer{text-align:center;font-size:11px;color:#aaa;margin-top:20px;padding-top:14px;border-top:1px dashed #ddd;line-height:1.7}
-@media print{body{padding:20px}}
+@media print{
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  body{padding:20px}
+}
 </style></head><body>
 <div class="hdr"><h1>FEEFLOW</h1><div class="sub">${school} · Official Payment Receipt</div></div>
 <div class="rec-no">Receipt No: <strong style="font-family:monospace;color:#333">${receipt.receiptNo || "REC-001"}</strong></div>
-<div class="amount-box"><div class="lbl">Amount Received</div><div class="val">KES ${fmt(receipt.amount)}</div></div>
+<div class="amount-box">
+  <div class="lbl">Amount Received</div>
+  <div class="val">KES ${fmt(receipt.amount)}</div>
+</div>
 <div class="row"><span class="lbl">Student</span><span class="val">${receipt.studentName}</span></div>
-${receipt.admNo ? `<div class="row"><span class="lbl">Adm. No.</span><span class="val">${receipt.admNo}</span></div>` : ""}
+${receipt.admNo   ? `<div class="row"><span class="lbl">Adm. No.</span><span class="val">${receipt.admNo}</span></div>` : ""}
 <div class="row"><span class="lbl">Class</span><span class="val">${receipt.className}</span></div>
 ${receipt.termName ? `<div class="row"><span class="lbl">Term</span><span class="val">${receipt.termName}</span></div>` : ""}
 <div class="row"><span class="lbl">Payment Method</span><span class="val">${METHOD[receipt.method] || receipt.method}</span></div>
-${receipt.txnRef ? `<div class="row"><span class="lbl">Transaction Ref</span><span class="val" style="font-family:monospace">${receipt.txnRef}</span></div>` : ""}
-<div class="row"><span class="lbl">Date & Time</span><span class="val">${fmtDatetime(receipt.paidAt)}</span></div>
-${balance !== undefined ? `<div class="bal" style="background:${balance > 0 ? "#fff5f5" : "#f0fdf4"};border:1px solid ${balance > 0 ? "#fecaca" : "#bbf7d0"}"><span style="color:${balance > 0 ? "#c00" : "#16a34a"}">Outstanding Balance</span><span style="color:${balance > 0 ? "#c00" : "#16a34a"}">${balance > 0 ? `KES ${fmt(balance)}` : "Cleared ✓"}</span></div>` : ""}
+${receipt.txnRef  ? `<div class="row"><span class="lbl">Transaction Ref</span><span class="val" style="font-family:monospace">${receipt.txnRef}</span></div>` : ""}
+<div class="row"><span class="lbl">Date &amp; Time</span><span class="val">${fmtDatetime(receipt.paidAt)}</span></div>
+${balance !== undefined
+  ? `<div class="bal" style="background:${balance > 0 ? "#fff5f5" : "#f0fdf4"};border:1px solid ${balance > 0 ? "#fecaca" : "#bbf7d0"}">
+      <span style="color:${balance > 0 ? "#c00" : "#16a34a"}">Outstanding Balance</span>
+      <span style="color:${balance > 0 ? "#c00" : "#16a34a"}">${balance > 0 ? `KES ${fmt(balance)}` : "Cleared ✓"}</span>
+    </div>`
+  : ""}
 <div class="footer">Thank you for your payment · ${school}<br>Powered by FeeFlow · Fee Management Platform</div>
 </body></html>`;
     const win = window.open("", "_blank");
     win.document.write(html);
     win.document.close();
-    win.onload = () => setTimeout(() => win.print(), 300);
+    win.onload = () => setTimeout(() => win.print(), 400);
   };
 
   return (
@@ -314,13 +438,14 @@ function CreateInvoiceModal({ onClose, token, schoolName }) {
       await axios.post(`${API}/api/invoices`, {
         studentIds: selectedIds,
         dueDate,
-        scheduledFor: sendDate ? `${sendDate}T${sendTime}:00` : null,
+        sendDate: sendDate ? `${sendDate}T${sendTime}:00` : null,
+        feeBreakdown: [],
         channels,
         note,
         termName,
       }, { headers: { Authorization: `Bearer ${token}` } });
       onClose();
-    } catch (e) { setError(e.response?.data?.message || "Failed to schedule invoices."); }
+    } catch (e) { setError(e.response?.data?.message || "Failed to send invoices."); }
     finally { setSending(false); }
   };
 
@@ -771,6 +896,8 @@ export default function InvoicesReceipts() {
   const students                      = useAppStore(s => s.students);
 
   const [tab,            setTab]            = useState("invoices");
+  const [invPage,        setInvPage]        = useState(1);
+  const [recPage,        setRecPage]        = useState(1);
   const [invoices,       setInvoices]       = useState([]);
   const [receipts,       setReceipts]       = useState([]);
   const [invLoading,     setInvLoading]     = useState(false);
@@ -791,7 +918,7 @@ export default function InvoicesReceipts() {
     if (tab !== "invoices" || !canUse("invoices")) return;
     setInvLoading(true);
     axios.get(`${API}/api/invoices`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => setInvoices(r.data || []))
+      .then(r => setInvoices(Array.isArray(r.data) ? r.data : (r.data?.data || [])))
       .catch(() => {})
       .finally(() => setInvLoading(false));
   }, [tab, token, canUse]);
@@ -801,7 +928,7 @@ export default function InvoicesReceipts() {
     if (tab !== "receipts") return;
     setRecLoading(true);
     axios.get(`${API}/api/receipts`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => setReceipts(r.data || []))
+      .then(r => setReceipts(Array.isArray(r.data) ? r.data : (r.data?.data || [])))
       .catch(() => {})
       .finally(() => setRecLoading(false));
   }, [tab, token]);
@@ -820,10 +947,16 @@ export default function InvoicesReceipts() {
     } catch {}
   };
 
+  // Reset pages when tab changes
+  useEffect(() => { setInvPage(1); setRecPage(1); }, [tab]);
+
   const filteredInvoices = useMemo(() => invoices.filter(inv =>
     (filterInvStatus === "all" || inv.status === filterInvStatus) &&
     (searchInv === "" || (inv.studentName || "").toLowerCase().includes(searchInv.toLowerCase()) || (inv.admNo || "").toLowerCase().includes(searchInv.toLowerCase()))
   ), [invoices, filterInvStatus, searchInv]);
+
+  const invTotalPages   = Math.ceil(filteredInvoices.length / PAGE_SIZE);
+  const paginatedInv     = useMemo(() => filteredInvoices.slice((invPage-1)*PAGE_SIZE, invPage*PAGE_SIZE), [filteredInvoices, invPage]);
 
   const filteredReceipts = useMemo(() => receipts.filter(r =>
     (filterRecStatus === "all" || r.status === filterRecStatus) &&
@@ -847,6 +980,9 @@ export default function InvoicesReceipts() {
 
   const searchInp = { height: 38, padding: "0 12px 0 36px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", fontSize: 13.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit", flex: "1 1 180px", minWidth: 160 };
   const selInp    = { height: 38, padding: "0 12px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", fontSize: 13.5, outline: "none", fontFamily: "inherit" };
+
+  const recTotalPages   = Math.ceil(filteredReceipts.length / PAGE_SIZE);
+  const paginatedRec     = useMemo(() => filteredReceipts.slice((recPage-1)*PAGE_SIZE, recPage*PAGE_SIZE), [filteredReceipts, recPage]);
 
   return (
     <>

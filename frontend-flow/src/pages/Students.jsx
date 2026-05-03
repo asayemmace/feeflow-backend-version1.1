@@ -5,8 +5,11 @@ import { useOutletContext } from "react-router-dom";
 import Topbar from "../components/TopBar";
 import { useFeeStructure } from "../hooks/useFeeStructure";
 import useAppStore from "../store/useAppStore";
+import ImportStudentsModal from "../components/ImportStudentsModal";
+import Pagination from "../components/Pagination";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const PAGE_SIZE = 50;
 
 function computeStatus(fee, paid) {
   if (paid <= 0)   return "overdue";
@@ -684,6 +687,9 @@ export default function Students() {
   const studentsLoaded = useAppStore(s => s.studentsLoaded);
 
   const [showModal,    setShowModal]    = useState(false);
+  const [showImport,   setShowImport]   = useState(false);
+  const [page,         setPage]         = useState(1);
+  const activeTerm     = useAppStore(s => s.activeTerm);
   const [profileId,    setProfileId]    = useState(null);
   const [editTarget,   setEditTarget]   = useState(null);
   const [search,       setSearch]       = useState("");
@@ -700,6 +706,9 @@ export default function Students() {
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
 
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [search, filterStatus, filterClass]);
+
   const studentsWithStatus = useMemo(() => students.map(s => ({ ...s, _status: computeStatus(s.fee, s.paid) })), [students]);
   const filtered = useMemo(() => studentsWithStatus.filter(s =>
     (search === "" || s.name.toLowerCase().includes(search.toLowerCase()) || s.cls.toLowerCase().includes(search.toLowerCase()) || (s.adm || "").toLowerCase().includes(search.toLowerCase())) &&
@@ -714,7 +723,9 @@ export default function Students() {
     overdue: studentsWithStatus.filter(s => s._status === "overdue").length,
   }), [studentsWithStatus]);
 
-  const allClasses = useMemo(() => [...new Set([...classes, ...students.map(s => s.cls)])].filter(Boolean).sort(), [students, classes]);
+  const allClasses   = useMemo(() => [...new Set([...classes, ...students.map(s => s.cls)])].filter(Boolean).sort(), [students, classes]);
+  const totalPages   = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated    = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
 
   const openProfile = s => setProfileId(s.id);
   const openEdit    = s => { setProfileId(null); setEditTarget(s); };
@@ -722,10 +733,34 @@ export default function Students() {
   return (
     <>
       <Topbar title="Students" sub={`${students.length} enrolled`} onMenuClick={openSidebar}>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Add Student</button>
+        <button
+          onClick={() => setShowImport(true)}
+          style={{ padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>
+          📥 Import CSV
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            if (!activeTerm) { showToast("Create an active term first (Dashboard → New Term) before adding students.", "error"); return; }
+            setShowModal(true);
+          }}
+          title={!activeTerm ? "Create an active term first" : "Add new student"}>
+          + Add Student
+        </button>
       </Topbar>
 
       <div className="page-content">
+        {/* No active term warning */}
+        {!activeTerm && studentsLoaded && (
+          <div style={{ background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--amber)" }}>No active term</div>
+              <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 2 }}>You need to create a term before adding students. Go to Dashboard → New Term.</div>
+            </div>
+          </div>
+        )}
+
         {/* Stat pills */}
         <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
           {[
@@ -751,7 +786,7 @@ export default function Students() {
             <option value="all">All classes</option>
             {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <div style={{ fontSize: 12, color: "var(--text3)", whiteSpace: "nowrap" }}>{filtered.length} of {students.length}</div>
+          <div style={{ fontSize: 12, color: "var(--text3)", whiteSpace: "nowrap" }}>{filtered.length} student{filtered.length !== 1 ? "s" : ""} · Page {page} of {totalPages || 1}</div>
         </div>
 
         {/* Table / Cards */}
@@ -765,7 +800,7 @@ export default function Students() {
               <div style={{ fontSize: 13, color: "var(--accent)", cursor: "pointer" }} onClick={() => { setSearch(""); setFilterStatus("all"); setFilterClass("all"); }}>Clear filters</div>
             </div>
           ) : mobileView ? (
-            filtered.map(s => <StudentCard key={s.id} s={s} onClick={() => openProfile(s)} />)
+            paginated.map(s => <StudentCard key={s.id} s={s} onClick={() => openProfile(s)} />)
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table>
@@ -773,7 +808,7 @@ export default function Students() {
                   <tr>{["Student", "Adm No.", "Class", "Term Fee", "Paid", "Balance", "Progress", "Status"].map(h => <th key={h}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {filtered.map(s => {
+                  {paginated.map(s => {
                     const balance = s.fee - s.paid;
                     return (
                       <tr key={s.id} onClick={() => openProfile(s)} style={{ cursor: "pointer" }}>
@@ -797,6 +832,7 @@ export default function Students() {
               </table>
             </div>
           )}
+          <Pagination page={page} totalPages={totalPages} onChange={p => { setPage(p); window.scrollTo(0, 0); }} total={filtered.length} perPage={PAGE_SIZE} />
         </div>
       </div>
 
@@ -808,6 +844,10 @@ export default function Students() {
 
       {editTarget && (
         <EditStudentModal student={editTarget} token={token} onClose={() => setEditTarget(null)} />
+      )}
+
+      {showImport && (
+        <ImportStudentsModal onClose={() => setShowImport(false)} />
       )}
 
       {toast && (

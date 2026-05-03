@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 const AuthContext = createContext(null);
@@ -21,6 +21,47 @@ export const AuthProvider = ({ children }) => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('ff_theme', theme);
   }, [theme]);
+
+  // ── Token refresh — silently renew when < 7 days remain ──────────────────
+  const refreshTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!token) return;
+    const getExpiry = (t) => {
+      try { const p = JSON.parse(atob(t.split(".")[1])); return p.exp ? p.exp * 1000 : null; }
+      catch { return null; }
+    };
+    const expiry = getExpiry(token);
+    if (!expiry) return;
+    const msLeft   = expiry - Date.now();
+    const daysLeft = Math.floor(msLeft / (1000 * 60 * 60 * 24));
+    if (msLeft <= 0) return;
+
+    const doRefresh = async () => {
+      try {
+        const res = await axios.post(`${API}/api/auth/refresh`, {}, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.data?.token) {
+          localStorage.setItem('ff_token', res.data.token);
+          setToken(res.data.token);
+          if (res.data.user) {
+            setUser(res.data.user);
+            localStorage.setItem('ff_user', JSON.stringify(res.data.user));
+          }
+        }
+      } catch (e) { console.warn('Token refresh failed:', e.message); }
+    };
+
+    if (daysLeft < 7) {
+      doRefresh();
+      return;
+    }
+    // Schedule refresh 7 days before expiry
+    const delay = Math.max(0, expiry - 7 * 24 * 60 * 60 * 1000 - Date.now());
+    refreshTimerRef.current = setTimeout(doRefresh, delay);
+    return () => { if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current); };
+  }, [token]);
 
   const saveSession = (tok, usr) => {
     localStorage.setItem('ff_token', tok);

@@ -94,21 +94,18 @@ const Landing = () => {
   return (
     <div style={{ background: 'var(--bg)', color: 'var(--text)', minHeight: '100vh', letterSpacing: '0.01em' }}>
       {/* Navigation */}
-      <nav style={{ 
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
-        padding: '16px 5%', maxWidth: 1200, margin: '0 auto' 
-      }}>
+      <nav className="landing-nav">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700, fontSize: 18 }}>
           <div style={{ width: 28, color: '#22d3a4' }}><LogoIcon /></div>
           <span style={{ letterSpacing: '-0.3px' }}>FeeFlow</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+        <div className="landing-nav-links" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <a href="#features" onClick={(e) => { e.preventDefault(); scrollTo('features'); }} 
              style={{ fontSize: 13, color: 'var(--text2)', textDecoration: 'none', fontWeight: 500 }}>Features</a>
           <a href="#pricing" onClick={(e) => { e.preventDefault(); scrollTo('pricing'); }} 
              style={{ fontSize: 13, color: 'var(--text2)', textDecoration: 'none', fontWeight: 500 }}>Pricing</a>
-          <button className="btn btn-outline" style={{ borderRadius: 8, padding: '6px 16px', fontSize: 13 }} onClick={() => navigate('/login')}>Sign In</button>
-          <button className="btn btn-primary" style={{ borderRadius: 8, padding: '6px 20px', fontSize: 13 }} onClick={() => navigate('/register')}>Get Started</button>
+          <button className="btn btn-outline" style={{ borderRadius: 8, padding: '6px 14px', fontSize: 13 }} onClick={() => navigate('/login')}>Sign In</button>
+          <button className="btn btn-primary" style={{ borderRadius: 8, padding: '6px 16px', fontSize: 13 }} onClick={() => navigate('/register')}>Get Started</button>
         </div>
       </nav>
 
@@ -162,7 +159,7 @@ const Landing = () => {
             <p style={{ color: 'var(--text2)', fontSize: 15 }}>The right tools for every stage of your school's growth.</p>
           </div>
           
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+          <div className='pricing-grid'>
             {PLANS.map(plan => (
               <div key={plan.name} style={{ 
                 background: 'var(--surface)', padding: 32, borderRadius: 20, border: '1px solid var(--border)',
@@ -246,11 +243,7 @@ const Landing = () => {
         .btn-primary:hover { opacity: 0.9; }
         .btn-outline { background: transparent; border-color: var(--border); color: var(--text2); }
         .btn-outline:hover { background: var(--surface2); color: var(--text); border-color: var(--text3); }
-        @media (max-width: 768px) {
-          nav { flex-direction: row; justify-content: space-between; }
-          nav div:last-child { gap: 12px; }
-          nav a { display: none; }
-        }
+
       `}</style>
     </div>
   );

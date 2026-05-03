@@ -8,37 +8,45 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ─── USER ─────────────────────────────────────────────────────────────────────
 model User {
-  id               String             @id @default(uuid())
-  name             String
-  email            String             @unique
-  password         String
-  phone            String?
-  schoolName       String?
-  plan             String             @default("free")
+  id                  String          @id @default(uuid())
+  name                String
+  email               String          @unique
+  password            String
+  phone               String?
+  schoolName          String?
+  plan                String          @default("free")
   planExpiry          DateTime?
+
+  // M-Pesa credentials — AES-256 encrypted, stored per school
   mpesaConsumerKey    String?
   mpesaConsumerSecret String?
   mpesaShortcode      String?
   mpesaPasskey        String?
-  mpesaConfigured     Boolean            @default(false)
-  createdAt           DateTime           @default(now())
-  students         Student[]
-  payments         Payment[]
-  terms            Term[]
-  unmatchedPayments UnmatchedPayment[]
-  invoices         Invoice[]
-  receipts         Receipt[]
+  mpesaConfigured     Boolean         @default(false)
+
+  // Daily automated overdue reminders at 8am EAT — opt-in per school
+  autoReminders       Boolean         @default(false)
+
+  createdAt           DateTime        @default(now())
+
+  // Relations
+  students            Student[]
+  payments            Payment[]
+  terms               Term[]
+  unmatchedPayments   UnmatchedPayment[]
+  invoices            Invoice[]
+  receipts            Receipt[]
+  passwordReset       PasswordReset?
+  auditLogs           AuditLog[]
 }
 
+// ─── STUDENT ──────────────────────────────────────────────────────────────────
 model Student {
   id          String    @id @default(uuid())
   name        String
-<<<<<<< HEAD
-  adm         String    @@unique([userId, adm])
-=======
   adm         String    @default("")
->>>>>>> b8f9cd6 (update)
   cls         String    @default("")
   fee         Float     @default(0)
   paid        Float     @default(0)
@@ -49,54 +57,76 @@ model Student {
   daysOverdue Int       @default(0)
   termId      String?
   userId      String
-  user        User      @relation(fields: [userId], references: [id])
   createdAt   DateTime  @default(now())
+  deletedAt   DateTime?              // soft delete — data preserved, hidden from queries
+
+  user        User      @relation(fields: [userId], references: [id])
   payments    Payment[]
+
+  @@index([userId, deletedAt])       // fast active-student lookup per school
+  @@index([userId, cls])             // fast class-level filtering
 }
 
+// ─── PAYMENT ──────────────────────────────────────────────────────────────────
 model Payment {
-  id        String   @id @default(uuid())
-  amount    Float
-  txnRef    String?
-  method    String   @default("manual")
-  termId    String?
-  studentId String
-  feeBreakdown  Json?   @default("[]") 
-  student   Student  @relation(fields: [studentId], references: [id])
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())  // fixed: was @now() which is invalid
+  id           String    @id @default(uuid())
+  amount       Float
+  txnRef       String?
+  method       String    @default("manual")
+  termId       String?
+  studentId    String
+  feeBreakdown Json?     @default("[]")
+  userId       String
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?              // soft delete — audit trail preserved
+
+  student      Student   @relation(fields: [studentId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, deletedAt])
+  @@index([txnRef])                  // fast idempotency check for M-Pesa callbacks
 }
 
+// ─── TERM ─────────────────────────────────────────────────────────────────────
 model Term {
   id        String   @id @default(uuid())
   name      String
   startDate DateTime
   endDate   DateTime
-  status    String   @default("active")
+  status    String   @default("active")   // "active" | "closed"
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
 }
 
+// ─── UNMATCHED PAYMENT ────────────────────────────────────────────────────────
 model UnmatchedPayment {
   id        String   @id @default(uuid())
   phone     String?
   txnRef    String?
   amount    Float
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
 
+// ─── INVOICE ──────────────────────────────────────────────────────────────────
 model Invoice {
   id           String    @id @default(cuid())
+  invoiceNo    Int       @default(0)
+  token        String    @default("")
   userId       String
   studentId    String
   studentName  String
   admNo        String?
-  className    String
-  totalFee     Float
+  className    String    @default("")
+  totalFee     Float     @default(0)
   paid         Float     @default(0)
   balance      Float     @default(0)
   dueDate      DateTime
@@ -109,27 +139,74 @@ model Invoice {
   parentPhone  String?
   parentName   String?
   status       String    @default("draft")
+  smsMessageId String?
+  smsStatus    String?   @default("pending")
   createdAt    DateTime  @default(now())
+
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, scheduledFor])
+  @@index([smsMessageId])
 }
 
+// ─── RECEIPT ──────────────────────────────────────────────────────────────────
 model Receipt {
-  id          String   @id @default(cuid())
-  userId      String
-  paymentId   String
-  studentId   String
-  studentName String
-  admNo       String?
-  className   String
-  amount      Float
-  method      String
-  txnRef      String?
-  paidAt      DateTime
-  sentAt      DateTime?
-  channels    String[]
-  type        String   @default("manual")
-  balance     Float    @default(0)
-  status      String   @default("pending")
-  createdAt   DateTime @default(now())
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String    @id @default(cuid())
+  receiptNo    String    @default("")
+  token        String    @default("")
+  userId       String
+  paymentId    String
+  studentId    String
+  studentName  String
+  admNo        String?
+  className    String    @default("")
+  amount       Float
+  method       String
+  txnRef       String?
+  paidAt       DateTime
+  sentAt       DateTime?
+  channels     String[]
+  type         String    @default("manual")
+  balance      Float     @default(0)
+  status       String    @default("pending")
+  smsMessageId String?
+  smsStatus    String?   @default("pending")
+  createdAt    DateTime  @default(now())
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([smsMessageId])
+}
+
+// ─── PASSWORD RESET ───────────────────────────────────────────────────────────
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  code      String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  details   Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ─── SEQUENCE ─────────────────────────────────────────────────────────────────
+model Sequence {
+  id      String @id
+  nextVal Int    @default(1)
 }

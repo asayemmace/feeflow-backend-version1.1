@@ -82,11 +82,18 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
       const feeUpdates = {};
       Object.entries(feeOverrides).forEach(([cls, fee]) => { if (fee > 0) feeUpdates[cls] = fee; });
 
+      // Snapshot current student fees BEFORE the server resets them, so PastTermsPanel
+      // can use the old fees when generating the closed term's PDF report.
+      const studentSnapshot = students.reduce((acc, s) => {
+        acc[s.id] = { fee: s.fee, cls: s.cls, name: s.name, adm: s.adm, parentName: s.parentName, parentPhone: s.parentPhone };
+        return acc;
+      }, {});
+
       const res = await axios.post(`${API}/api/terms`,
-        { name: form.name.trim(), startDate: form.startDate, endDate: form.endDate, feeUpdates },
+        { name: form.name.trim(), startDate: form.startDate, endDate: form.endDate, feeUpdates, confirmReset: true },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      onCreated(res.data, feeUpdates);
+      onCreated(res.data, feeUpdates, studentSnapshot);
       onClose();
     } catch (err) {
       setError(err.response?.data?.message || "Failed to create term.");
@@ -291,6 +298,7 @@ function NewTermModal({ onClose, onCreated, existingTerm }) {
 function PastTermsPanel({ onClose }) {
   const { token, user } = useAuth();
   const allTerms        = useAppStore(s => s.terms);
+  const termSnapshots   = useAppStore(s => s.termSnapshots); // { [termId]: { studentFees: { [studentId]: fee } } }
   const [downloading, setDownloading] = useState(null);
 
   const schoolName = user?.schoolName || "School";
@@ -312,16 +320,24 @@ function PastTermsPanel({ onClose }) {
     });
 
     const totalCollected = termPayments.reduce((s, p) => s + (p.amount || 0), 0);
-    const totalExpected  = students.reduce((s, st) => s + (st.fee || 0), 0);
 
     const paidMap = {};
     termPayments.forEach(p => { paidMap[p.studentId] = (paidMap[p.studentId] || 0) + (p.amount || 0); });
 
-    const paid    = students.filter(s => (paidMap[s.id] || 0) >= s.fee && s.fee > 0);
-    const partial = students.filter(s => (paidMap[s.id] || 0) > 0 && (paidMap[s.id] || 0) < s.fee);
-    const unpaid  = students.filter(s => !(paidMap[s.id] || 0));
+    // Use the fee snapshot saved at the time this term was closed — not the live fee
+    // which may have been updated for the new term. Falls back to current fee if no snapshot.
+    const snapshot = termSnapshots?.[term.id];
+    const studentsWithCorrectFees = students.map(s => ({
+      ...s,
+      fee: snapshot?.[s.id]?.fee ?? s.fee,
+    }));
 
-    return { students, totalCollected, totalExpected, paid, partial, unpaid, paidMap };
+    const totalExpected = studentsWithCorrectFees.reduce((s, st) => s + (st.fee || 0), 0);
+    const paid    = studentsWithCorrectFees.filter(s => (paidMap[s.id] || 0) >= s.fee && s.fee > 0);
+    const partial = studentsWithCorrectFees.filter(s => (paidMap[s.id] || 0) > 0 && (paidMap[s.id] || 0) < s.fee);
+    const unpaid  = studentsWithCorrectFees.filter(s => !(paidMap[s.id] || 0) && s.fee > 0);
+
+    return { students: studentsWithCorrectFees, totalCollected, totalExpected, paid, partial, unpaid, paidMap };
   };
 
   const generatePDF = (term, data) => {
@@ -349,24 +365,27 @@ function PastTermsPanel({ onClose }) {
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:Arial,sans-serif;color:#1a1a2e;padding:40px;font-size:13px}
-    .hdr{background:#003366;color:#fff;padding:24px 28px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}
+    .hdr{background:#003366;color:#fff;padding:24px 28px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .hdr h1{font-size:22px;margin-bottom:4px}.hdr .sub{font-size:12px;opacity:.75}
     .hdr .badge{font-size:11px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:4px 12px;border-radius:20px;margin-top:6px;display:inline-block}
     .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
     .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px}
-    .box{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px}
+    .box{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .box .val{font-size:22px;font-weight:700;color:#003366}.box .lbl{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.8px;margin-top:4px}
     .progress-wrap{margin-bottom:28px}.progress-lbl{font-size:12px;color:#555;margin-bottom:6px}
-    .progress-bar{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden}
-    .progress-fill{height:100%;background:${barColor};border-radius:4px;width:${pct}%}
+    .progress-bar{height:10px;background:#e2e8f0;border-radius:4px;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .progress-fill{height:100%;background:${barColor};border-radius:4px;width:${pct}%;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .sec{font-size:13px;font-weight:700;color:#003366;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #003366}
     table{width:100%;border-collapse:collapse;margin-bottom:28px;font-size:12.5px}
-    thead tr{background:#003366;color:#fff}
+    thead tr{background:#003366;color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     thead th{padding:10px 12px;text-align:left;font-weight:600;font-size:11px;letter-spacing:.5px}
-    tbody tr:nth-child(even){background:#f7f9fc}
+    tbody tr:nth-child(even){background:#f7f9fc;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     tbody td{padding:9px 12px;border-bottom:1px solid #e8ecf0;color:#333}
     .footer{margin-top:36px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:14px}
-    @media print{body{padding:20px}}
+    @media print{
+      *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+      body{padding:20px}
+    }
   </style>
 </head>
 <body>
@@ -394,9 +413,9 @@ function PastTermsPanel({ onClose }) {
   </div>
 
   <div class="grid3">
-    <div class="box"><div class="val" style="color:#22c55e">${paid.length}</div><div class="lbl">Fully Paid</div></div>
-    <div class="box"><div class="val" style="color:#f59e0b">${partial.length}</div><div class="lbl">Partial Payment</div></div>
-    <div class="box"><div class="val" style="color:#ef4444">${unpaid.length}</div><div class="lbl">No Payment</div></div>
+    <div class="box" style="-webkit-print-color-adjust:exact;print-color-adjust:exact"><div class="val" style="color:#22c55e">${paid.length}</div><div class="lbl">Fully Paid</div></div>
+    <div class="box" style="-webkit-print-color-adjust:exact;print-color-adjust:exact"><div class="val" style="color:#f59e0b">${partial.length}</div><div class="lbl">Partial Payment</div></div>
+    <div class="box" style="-webkit-print-color-adjust:exact;print-color-adjust:exact"><div class="val" style="color:#ef4444">${unpaid.length}</div><div class="lbl">No Payment</div></div>
   </div>
 
   ${unpaid.length > 0 ? `
@@ -489,7 +508,12 @@ export default function Dashboard() {
   const [showNewTerm,   setShowNewTerm]   = useState(false);
   const [showPastTerms, setShowPastTerms] = useState(false);
 
-  const handleTermCreated = (newTerm, feeUpdates) => {
+  const handleTermCreated = (newTerm, feeUpdates, studentSnapshot) => {
+    // Save snapshot of student fees for the term that just closed (the previous activeTerm)
+    // This lets PastTermsPanel generate correct PDFs with old fee data, not new term fees.
+    if (activeTerm && studentSnapshot) {
+      useAppStore.getState().saveTermSnapshot(activeTerm.id, studentSnapshot);
+    }
     // Update store locally — students reset to paid=0, fees updated per class
     setNewTerm(newTerm);
     // Apply fee updates to students in the store
@@ -529,14 +553,14 @@ export default function Dashboard() {
           <div className="topbar-title">{user?.schoolName || "Dashboard"}</div>
           <div className="topbar-sub">{activeTerm.name} &nbsp;·&nbsp; Week {curWeek} of {totalWeeks}</div>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div className="topbar-actions" style={{ display: "flex", gap: 10 }}>
           <button className="btn btn-outline" onClick={() => setShowPastTerms(true)}>Past Terms</button>
           <button className="btn btn-outline" onClick={() => setShowNewTerm(true)}>New Term</button>
         </div>
       </div>
 
       {/* Term banner */}
-      <div style={{ background: "linear-gradient(135deg,var(--green-bg),var(--blue-bg))", border: "1px solid var(--green-border)", borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+      <div className="term-banner" style={{ background: "linear-gradient(135deg,var(--green-bg),var(--blue-bg))", border: "1px solid var(--green-border)", borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div className="pulse-dot" />
           <div>

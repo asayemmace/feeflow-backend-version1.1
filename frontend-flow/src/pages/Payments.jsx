@@ -1,12 +1,14 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import { useOutletContext } from "react-router-dom";
 import Topbar from "../components/TopBar";
 import { useFeeStructure } from "../hooks/useFeeStructure";
 import useAppStore from "../store/useAppStore";
+import Pagination from "../components/Pagination";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const PAGE_SIZE = 50;
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const SearchIcon = () => <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>;
@@ -32,25 +34,28 @@ function printReceipt(payment, schoolName = "FeeFlow School") {
   const methodLabel = { mpesa: "M-Pesa", bank: "Bank Transfer", cash: "Cash" };
   const win = window.open("", "_blank", "width=420,height=600");
   win.document.write(`
-    <!DOCTYPE html><html><head><title>Receipt</title>
+    <!DOCTYPE html><html lang="en"><head><title>Receipt</title>
     <style>
       *{margin:0;padding:0;box-sizing:border-box}
-      body{font-family:'Segoe UI',sans-serif;font-size:13px;color:#111;padding:28px;max-width:380px;margin:0 auto}
-      .logo{font-size:20px;font-weight:700;color:#059669;margin-bottom:2px}
+      body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#111;padding:28px;max-width:380px;margin:0 auto}
+      .logo{font-size:20px;font-weight:700;color:#059669;margin-bottom:2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .school{font-size:11px;color:#666;margin-bottom:20px}
-      h2{font-size:15px;font-weight:700;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #059669}
+      h2{font-size:15px;font-weight:700;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #059669;color:#059669;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #eee;font-size:12.5px}
       .row .label{color:#666}
       .row .val{font-weight:600;text-align:right;max-width:60%}
-      .amount{font-size:22px;font-weight:800;color:#059669;text-align:center;padding:16px 0;margin:12px 0;background:#f0fdf4;border-radius:8px}
+      .amount{font-size:22px;font-weight:800;color:#059669;text-align:center;padding:16px 0;margin:12px 0;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .section{margin-top:14px;font-size:11.5px;color:#666;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
       .footer{text-align:center;font-size:11px;color:#aaa;margin-top:20px;padding-top:12px;border-top:1px dashed #ddd}
-      @media print{body{padding:16px}}
+      @media print{
+        *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+        body{padding:16px}
+      }
     </style></head><body>
     <div class="logo">FeeFlow</div>
     <div class="school">${schoolName}</div>
     <h2>Payment Receipt</h2>
-    <div class="amount">${payment.amount}</div>
+    <div class="amount">KES ${payment.amount}</div>
     ${[
       ["Student",    payment.name],
       ["Class · Adm", payment.meta],
@@ -67,7 +72,7 @@ function printReceipt(payment, schoolName = "FeeFlow School") {
   `);
   win.document.close();
   win.focus();
-  setTimeout(() => win.print(), 300);
+  setTimeout(() => win.print(), 400);
 }
 
 // ─── Delete Confirm Modal ─────────────────────────────────────────────────────
@@ -530,6 +535,7 @@ export default function Payments() {
 
   const [showModal,     setShowModal]     = useState(false);
   const [deleteTarget,  setDeleteTarget]  = useState(null);
+  const [page,          setPage]          = useState(1);
   const [assignTarget,  setAssignTarget]  = useState(null);
   const [search,        setSearch]        = useState("");
   // Only the 3 real methods — no Manual filter
@@ -553,6 +559,15 @@ export default function Payments() {
     const n = typeof p.amount === "string" ? parseFloat(p.amount.replace(/[^0-9.]/g, "")) || 0 : p.amount || 0;
     return s + n;
   }, 0), [filtered]);
+
+  // Reset to page 1 when filters change
+  const filteredLen = filtered.length;
+  const totalPages  = Math.ceil(filteredLen / PAGE_SIZE);
+  const paginated   = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
+
+  // auto-reset page when filters change
+  const prevFilterKey = useMemo(() => search + methodFilter + dateFilter + studentFilter, [search, methodFilter, dateFilter, studentFilter]);
+  useEffect(() => { setPage(1); }, [prevFilterKey]);
 
   const studentsWithPayments = useMemo(() => {
     const ids = new Set(payments.map(p => p.studentId).filter(Boolean));
@@ -620,9 +635,9 @@ export default function Payments() {
                   {search || methodFilter !== "all" ? "Clear filters" : "Add manual payment →"}
                 </div>
               </div>
-            ) : filtered.map((p, i) => (
+            ) : paginated.map((p, i) => (
               <div key={p.id || i}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none", transition: "background .1s" }}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderBottom: i < paginated.length - 1 ? "1px solid var(--border)" : "none", transition: "background .1s" }}
                 onMouseEnter={e => e.currentTarget.style.background = "var(--surface2)"}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                 <div style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, background: "var(--green-bg)", border: "1px solid var(--green-border)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--green)" }}><PayIcon /></div>
@@ -656,6 +671,7 @@ export default function Payments() {
               </div>
             ))}
           </div>
+          <Pagination page={page} totalPages={totalPages} onChange={p => { setPage(p); window.scrollTo(0,0); }} total={filteredLen} perPage={PAGE_SIZE} />
         </div>
 
         {/* Unmatched */}

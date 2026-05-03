@@ -4,52 +4,74 @@
  * Fetched ONCE when AppLayout mounts. All pages read from here.
  * Mutations (add/edit/delete) update the store locally — no re-fetch needed.
  * Only re-fetches on term change or manual refresh.
+ *
+ * PERFORMANCE: Bootstrap now uses a streaming approach —
+ * terms load first (fast, tiny payload) and unlock the UI immediately.
+ * Students + payments load in the background so the page is never blank.
  */
 import { create } from "zustand";
 import axios from "axios";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
+// Unwrap paginated { data: [], pagination: {} } OR plain array
+const unwrap = (res) => {
+  if (res.status !== "fulfilled") return [];
+  const d = res.value.data;
+  return Array.isArray(d) ? d : (d?.data || []);
+};
+
 const useAppStore = create((set, get) => ({
   // ── State ──────────────────────────────────────────────────────────────────
-  students:      [],
-  payments:      [],
-  unmatched:     [],
-  terms:         [],
-  activeTerm:    null,
-  stats:         null,
+  students:       [],
+  payments:       [],
+  unmatched:      [],
+  terms:          [],
+  activeTerm:     null,
+  stats:          null,
   recentPayments: [],
-  topUnpaid:     [],
+  topUnpaid:      [],
 
   studentsLoaded: false,
   paymentsLoaded: false,
   termsLoaded:    false,
   statsLoaded:    false,
 
-  // ── Bootstrap — called once from AppLayout ────────────────────────────────
+  termSnapshots: {},
+
+  // ── Bootstrap — streaming: terms first, then everything else ──────────────
+  // This fixes the long loading screen — the app renders as soon as terms
+  // are available (usually <300ms) instead of waiting for all 5 calls.
   bootstrap: async (token) => {
     const h = { Authorization: `Bearer ${token}` };
 
-    // Fire all four in parallel — pages show instantly from cache after first load
-    const [termsRes, studentsRes, paymentsRes, unmatchedRes, statsRes] = await Promise.allSettled([
-      axios.get(`${API}/api/terms`,              { headers: h }),
+    // PHASE 1: Load terms first — tiny payload, unlocks the UI immediately
+    try {
+      const termsRes = await axios.get(`${API}/api/terms`, { headers: h });
+      const terms    = Array.isArray(termsRes.data) ? termsRes.data : [];
+      set({
+        terms,
+        activeTerm:  terms.find(t => t.status === "active") || null,
+        termsLoaded: true,
+      });
+    } catch {
+      set({ termsLoaded: true }); // unlock UI even on failure
+    }
+
+    // PHASE 2: Load everything else in parallel — pages show skeletons meanwhile
+    const [studentsRes, paymentsRes, unmatchedRes, statsRes] = await Promise.allSettled([
       axios.get(`${API}/api/students`,           { headers: h }),
       axios.get(`${API}/api/payments`,           { headers: h }),
       axios.get(`${API}/api/payments/unmatched`, { headers: h }),
       axios.get(`${API}/api/stats`,              { headers: h }),
     ]);
 
-    const terms = termsRes.status === "fulfilled" ? termsRes.value.data : [];
     set({
-      terms,
-      activeTerm:    terms.find(t => t.status === "active") || null,
-      termsLoaded:   true,
-
-      students:       studentsRes.status === "fulfilled" ? studentsRes.value.data : [],
+      students:       unwrap(studentsRes),
       studentsLoaded: true,
 
-      payments:       paymentsRes.status === "fulfilled" ? paymentsRes.value.data : [],
-      unmatched:      unmatchedRes.status === "fulfilled" ? unmatchedRes.value.data : [],
+      payments:       unwrap(paymentsRes),
+      unmatched:      unmatchedRes.status === "fulfilled" ? (unmatchedRes.value.data || []) : [],
       paymentsLoaded: true,
 
       stats:          statsRes.status === "fulfilled" ? statsRes.value.data : null,
@@ -77,33 +99,30 @@ const useAppStore = create((set, get) => ({
     students: [], payments: [], unmatched: [], terms: [], activeTerm: null,
     stats: null, recentPayments: [], topUnpaid: [],
     studentsLoaded: false, paymentsLoaded: false, termsLoaded: false, statsLoaded: false,
+    termSnapshots: {},
   }),
 
   // ── Students mutations ────────────────────────────────────────────────────
-  addStudent: (student) => set(s => ({ students: [student, ...s.students] })),
-
-  updateStudent: (updated) => set(s => ({
-    students: s.students.map(st => st.id === updated.id ? updated : st),
-  })),
-
-  removeStudent: (id) => set(s => ({ students: s.students.filter(st => st.id !== id) })),
+  addStudent:    (student) => set(s => ({ students: [student, ...s.students] })),
+  updateStudent: (updated) => set(s => ({ students: s.students.map(st => st.id === updated.id ? updated : st) })),
+  removeStudent: (id)      => set(s => ({ students: s.students.filter(st => st.id !== id) })),
 
   // ── Payments mutations ────────────────────────────────────────────────────
-  addPayment: (payment) => set(s => ({ payments: [payment, ...s.payments] })),
+  addPayment:     (payment) => set(s => ({ payments: [payment, ...s.payments] })),
+  deletePayment:  (id)      => set(s => ({ payments: s.payments.filter(p => p.id !== id) })),
+  removeUnmatched:(id)      => set(s => ({ unmatched: s.unmatched.filter(u => u.id !== id) })),
 
-  deletePayment: (id) => set(s => ({ payments: s.payments.filter(p => p.id !== id) })),
-
-  removeUnmatched: (id) => set(s => ({ unmatched: s.unmatched.filter(u => u.id !== id) })),
+  // ── Term snapshot ─────────────────────────────────────────────────────────
+  saveTermSnapshot: (termId, snapshot) => set(s => ({
+    termSnapshots: { ...s.termSnapshots, [termId]: snapshot },
+  })),
 
   // ── Terms mutations ───────────────────────────────────────────────────────
   setNewTerm: (newTerm) => set(s => ({
     terms:      [...s.terms.map(t => ({ ...t, status: "closed" })), newTerm],
     activeTerm: newTerm,
-    // Reset student paid balances locally to mirror what server did
     students:   s.students.map(st => ({ ...st, paid: 0, daysOverdue: 0 })),
-    // Clear stats — will be refreshed
     stats: null, recentPayments: [], topUnpaid: [], statsLoaded: false,
-    // Clear payments — new term, fresh slate
     payments: [],
   })),
 }));

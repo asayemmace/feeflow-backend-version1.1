@@ -955,3 +955,307 @@ tbody td { padding: 11px 16px; font-size: 13px; color: var(--text2); }
   .topbar { padding: 16px 24px; }
   .page-content { padding: 20px 24px 48px; }
 }
+/* ═══════════════════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVENESS — Full overhaul
+   All breakpoints: 480px (small phones), 640px (large phones), 768px (tablet)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Topbar action buttons — wrap on small screens ────────────────────────── */
+.topbar {
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: var(--topbar-h);
+}
+.topbar > div:last-child {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ─── Page content safe padding ─────────────────────────────────────────────── */
+.page-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ─── Stat cards — 2 col on tablet, 1 col on phone ──────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+/* ─── Two-col layout ─────────────────────────────────────────────────────────── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* ─── Tables — horizontal scroll on mobile ───────────────────────────────────── */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.table-wrap table {
+  min-width: 560px;
+}
+
+/* ─── Modal — full screen on small phones ───────────────────────────────────── */
+.modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90dvh;
+  overflow-y: auto;
+  border-radius: 16px;
+}
+
+/* ─── Settings modal tabs — scrollable on mobile ────────────────────────────── */
+.settings-tabs {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.settings-tabs::-webkit-scrollbar { display: none; }
+
+/* ─── Landing nav — mobile ───────────────────────────────────────────────────── */
+.landing-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 5%;
+  max-width: 1200px;
+  margin: 0 auto;
+  flex-wrap: nowrap;
+}
+.landing-nav-links { display: flex; align-items: center; gap: 8px; }
+
+/* ─── Footer grid ─────────────────────────────────────────────────────────────── */
+.landing-footer-top {
+  grid-template-columns: 1.5fr 1fr 1fr 1fr;
+}
+
+/* ─── Pricing grid ────────────────────────────────────────────────────────────── */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+/* ─── Feature row cards in payments/invoices ─────────────────────────────────── */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ─── Buttons min tap target ─────────────────────────────────────────────────── */
+.btn {
+  min-height: 36px;
+  white-space: nowrap;
+}
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   TABLET — 769px to 1024px
+   ═══════════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .pricing-grid { grid-template-columns: repeat(2, 1fr); }
+  .landing-footer-top { grid-template-columns: 1fr 1fr; gap: 32px; }
+  .features-grid { grid-template-columns: repeat(2, 1fr); }
+  .topbar { padding: 16px 20px; }
+  .page-content { padding: 20px 20px 48px; }
+  .two-col { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   MOBILE — max 768px
+   ═══════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── Layout ── */
+  .sidebar { transform: translateX(-100%); box-shadow: none; }
+  .sidebar.open { transform: translateX(0); box-shadow: 4px 0 32px rgba(0,0,0,0.4); }
+  .sidebar-overlay.open { display: block; }
+  .main-content { margin-left: 0 !important; }
+  .menu-btn { display: flex; }
+  .sidebar-collapse-btn { display: none !important; }
+  .sidebar-collapsed { width: var(--sidebar-w) !important; min-width: var(--sidebar-w) !important; }
+  .main-content-expanded { margin-left: 0 !important; }
+
+  /* ── Topbar ── */
+  .topbar { padding: 12px 16px; gap: 8px; }
+  .topbar-title { font-size: 18px; }
+  .topbar-sub { font-size: 11.5px; }
+
+  /* ── Page content ── */
+  .page-content { padding: 14px 14px 64px; }
+
+  /* ── Stat grid ── */
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* ── Two col → single ── */
+  .two-col { grid-template-columns: 1fr; gap: 14px; }
+
+  /* ── Feature grid ── */
+  .features-grid { grid-template-columns: 1fr; }
+
+  /* ── Pricing grid ── */
+  .pricing-grid { grid-template-columns: 1fr; }
+
+  /* ── Auth card ── */
+  .auth-page { padding: 16px; align-items: flex-start; padding-top: 32px; }
+  .auth-card { padding: 24px 18px; border-radius: 14px; }
+
+  /* ── Modals — near full screen ── */
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal {
+    max-width: 100%;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    animation: slideUpMobile .22s ease;
+  }
+  .modal-box {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    bottom: 0;
+    top: auto;
+    transform: none;
+    left: 0;
+    position: fixed;
+    max-width: 100%;
+  }
+
+  /* Settings modal */
+  .settings-modal {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    bottom: 0;
+    top: auto;
+    left: 0;
+    transform: none;
+    position: fixed;
+    max-width: 100%;
+  }
+
+  /* ── Landing nav ── */
+  .landing-nav { padding: 12px 16px; }
+  .landing-nav-links a { display: none; } /* hide text links, keep buttons */
+  .landing-hero { padding: 40px 16px 28px; }
+  .landing-stats { overflow-x: auto; flex-wrap: nowrap; }
+  .landing-stat-item { padding: 20px 24px; min-width: 120px; flex: 0 0 auto; }
+  .landing-features { padding: 40px 16px; }
+  .landing-pricing { padding: 40px 16px; }
+  .landing-footer-top { grid-template-columns: 1fr 1fr; gap: 28px; padding: 32px 16px 28px; }
+  .landing-footer-bottom { padding: 16px; flex-direction: column; align-items: flex-start; }
+  .landing-footer-links { display: none; }
+
+  /* ── Table wrapping ── */
+  .table-wrap { border-radius: 10px; }
+
+  /* ── Term banner — stack vertically ── */
+  .term-banner { flex-direction: column; align-items: flex-start; gap: 10px; }
+
+  /* ── Dashboard today row ── */
+  .today-row { flex-direction: column; gap: 10px; }
+  .today-right { flex-direction: column; gap: 8px; width: 100%; }
+  .today-right .btn { width: 100%; justify-content: center; }
+
+  /* ── Recent payments table ── */
+  .recent-table-col-hide { display: none; }
+
+  /* ── Topbar actions wrap ── */
+  .topbar-actions { flex-wrap: wrap; width: 100%; gap: 8px; }
+  .topbar-actions .btn { flex: 1; justify-content: center; min-width: 100px; }
+
+  /* ── Student/payment row cards ── */
+  .student-row-meta { display: none; }
+
+  /* ── Filter bar ── */
+  .filter-row { gap: 8px; }
+  .filter-row input[type="text"],
+  .filter-row input[type="search"] { width: 100%; }
+
+  /* ── Invoice/receipt tabs ── */
+  .inv-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   SMALL PHONES — max 480px
+   ═══════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+  /* ── Stat grid → single col ── */
+  .stats-grid { grid-template-columns: 1fr; gap: 10px; }
+
+  /* ── Topbar title smaller ── */
+  .topbar-title { font-size: 16px; }
+
+  /* ── Buttons full width in modal footer ── */
+  .modal-footer { flex-direction: column; gap: 8px; }
+  .modal-footer .btn { width: 100%; justify-content: center; }
+
+  /* ── Landing CTA buttons ── */
+  .landing-ctas { flex-direction: column; align-items: stretch; }
+  .landing-cta-primary, .landing-cta-secondary { text-align: center; width: 100%; }
+
+  /* ── Page content tighter ── */
+  .page-content { padding: 12px 12px 72px; }
+
+  /* ── Topbar import + add button stack ── */
+  .topbar-actions { flex-direction: column; }
+  .topbar-actions .btn { width: 100%; }
+
+  /* ── Auth ── */
+  .auth-card { padding: 20px 14px; }
+  .auth-title { font-size: 20px; }
+
+  /* ── Landing footer ── */
+  .landing-footer-top { grid-template-columns: 1fr; }
+  .landing-stat-item { padding: 16px 20px; }
+
+  /* ── Settings tabs ── */
+  .settings-tab { font-size: 11px; padding: 7px 10px; }
+}
+
+/* ─── Slide up animation for bottom-sheet modals ───────────────────────────── */
+@keyframes slideUpMobile {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ─── Safe area for devices with home indicator (iPhone X+) ─────────────────── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .main-content { padding-bottom: env(safe-area-inset-bottom); }
+  .modal, .modal-box, .settings-modal { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+}
+
+/* ─── Prevent horizontal overflow globally ──────────────────────────────────── */
+html, body { max-width: 100vw; overflow-x: hidden; }
+* { min-width: 0; }
+
+/* ─── Touch-friendly inputs ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .form-input, select, textarea {
+    font-size: 16px !important; /* prevents iOS zoom on focus */
+    min-height: 44px;
+  }
+  .form-label { font-size: 13px; }
+}
+
+/* ─── Dashboard stat card numbers responsive ────────────────────────────────── */
+@media (max-width: 640px) {
+  .stat-value { font-size: 20px !important; }
+  .stat-label { font-size: 11px !important; }
+}
