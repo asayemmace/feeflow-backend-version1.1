@@ -60,7 +60,9 @@ const allowedOrigins = [
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    const ol = origin.toLowerCase();
+    if (allowedOrigins.some(o => o.toLowerCase() === ol)) return callback(null, true);
+    console.warn("[CORS] Blocked origin:", origin);
     callback(new Error("CORS: origin " + origin + " not allowed"));
   },
   credentials: true,
@@ -150,7 +152,7 @@ const requirePlan = (feature) => async (req, res, next) => {
     }
     req.user = user;
     next();
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "plan check"); }
 };
 
 // BUG FIX: pick() now includes mpesaConfigured so the frontend can show
@@ -161,6 +163,35 @@ function pick(u) {
     schoolName: u.schoolName, plan: u.plan, planExpiry: u.planExpiry,
     mpesaConfigured: u.mpesaConfigured || false,
   };
+}
+
+// ─── STRUCTURED ERROR MESSAGES ────────────────────────────────────────────────
+// Maps Prisma error codes and known error patterns to human-readable messages.
+// Use: return apiError(res, e, "context label")
+function apiError(res, e, context = "") {
+  console.error((context ? "[" + context + "] " : "") + (e?.message || e));
+
+  // Prisma known errors
+  if (e?.code === "P2002") return res.status(409).json({ message: "This record already exists — a duplicate was detected. Please check and try again." });
+  if (e?.code === "P2025") return res.status(404).json({ message: "The record you are trying to update or delete no longer exists." });
+  if (e?.code === "P2003") return res.status(400).json({ message: "This action references a record that does not exist. Please refresh and try again." });
+  if (e?.code === "P2016") return res.status(404).json({ message: "Record not found in the database. It may have been deleted." });
+  if (e?.code?.startsWith("P1")) return res.status(503).json({ message: "Cannot connect to the database. Please try again in a few seconds." });
+
+  // Network / timeout errors
+  if (e?.name === "AbortError") return res.status(504).json({ message: "The request timed out waiting for an external service. Please try again." });
+  if (e?.message?.includes("fetch")) return res.status(502).json({ message: "Could not reach an external service. Check your internet connection and try again." });
+
+  // JWT errors
+  if (e?.name === "JsonWebTokenError") return res.status(401).json({ message: "Your session is invalid. Please log out and log back in." });
+  if (e?.name === "TokenExpiredError") return res.status(401).json({ message: "Your session has expired. Please log in again." });
+
+  // Validation errors
+  if (e?.message?.includes("required")) return res.status(400).json({ message: e.message });
+
+  // Generic fallback with context
+  const ctx = context ? context + ": " : "";
+  return res.status(500).json({ message: ctx + "An unexpected error occurred. Please try again. If this keeps happening, contact FeeFlow support." });
 }
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
@@ -174,7 +205,7 @@ app.post("/api/auth/register", async (req, res) => {
     const user = await prisma.user.create({ data: { name, email, password: await bcrypt.hash(password, 10), schoolName, plan: "free" } });
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" });
     res.status(201).json({ token, user: pick(user) });
-  } catch (e) { console.error("register:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "register"); }
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -187,7 +218,7 @@ app.post("/api/auth/login", async (req, res) => {
     if (!user || !(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: "Invalid email or password" });
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "30d" });
     res.json({ token, user: pick(user) });
-  } catch (e) { console.error("login:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "login"); }
 });
 
 app.get("/api/auth/me", requireAuth, async (req, res) => {
@@ -195,7 +226,7 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user) return res.status(404).json({ message: "Not found" });
     res.json(pick(user));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get me"); }
 });
 
 app.patch("/api/auth/profile", requireAuth, async (req, res) => {
@@ -210,7 +241,7 @@ app.patch("/api/auth/profile", requireAuth, async (req, res) => {
       },
     });
     res.json(pick(user));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "update profile"); }
 });
 
 app.patch("/api/auth/email", requireAuth, async (req, res) => {
@@ -224,7 +255,7 @@ app.patch("/api/auth/email", requireAuth, async (req, res) => {
     if (exists && exists.id !== req.userId) return res.status(400).json({ message: "Email already in use" });
     const updated = await prisma.user.update({ where: { id: req.userId }, data: { email } });
     res.json(pick(updated));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "change email"); }
 });
 
 app.patch("/api/auth/password", requireAuth, async (req, res) => {
@@ -237,7 +268,7 @@ app.patch("/api/auth/password", requireAuth, async (req, res) => {
     if (!user || !(await bcrypt.compare(currentPassword, user.password))) return res.status(401).json({ message: "Current password is incorrect" });
     await prisma.user.update({ where: { id: req.userId }, data: { password: await bcrypt.hash(newPassword, 10) } });
     res.json({ message: "Password updated" });
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "change password"); }
 });
 
 // ─── M-PESA CREDENTIALS (per-school) ─────────────────────────────────────────
@@ -257,7 +288,7 @@ app.patch("/api/auth/mpesa", requireAuth, async (req, res) => {
       },
     });
     res.json({ message: "M-Pesa credentials saved" });
-  } catch (e) { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "save M-Pesa credentials"); }
 });
 
 app.patch("/api/auth/sms", requireAuth, async (req, res) => {
@@ -304,10 +335,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       resetCodes.delete(email);
       res.status(500).json({ message: "Failed to send reset email. Please try again." });
     }
-  } catch (e) {
-    console.error("Forgot password error:", e);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+  } catch (e) { return apiError(res, e, "forgot password"); }
 });
 
 app.post("/api/auth/verify-reset-code", async (req, res) => {
@@ -334,10 +362,7 @@ app.post("/api/auth/verify-reset-code", async (req, res) => {
     const resetToken = jwt.sign({ userId: resetData.userId, email }, process.env.JWT_SECRET, { expiresIn: "15m" });
     resetCodes.delete(email);
     res.json({ resetToken });
-  } catch (e) {
-    console.error("Verify reset code error:", e);
-    res.status(500).json({ message: "Something went wrong" });
-  }
+  } catch (e) { return apiError(res, e, "verify reset code"); }
 });
 
 app.post("/api/auth/reset-password", async (req, res) => {
@@ -356,8 +381,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
   } catch (jwtError) {
     if (jwtError.name === "JsonWebTokenError" || jwtError.name === "TokenExpiredError")
       return res.status(400).json({ message: "Invalid or expired reset token" });
-    console.error("Reset password error:", jwtError);
-    res.status(500).json({ message: "Something went wrong" });
+    return apiError(res, jwtError, "reset password");
   }
 });
 
@@ -387,14 +411,14 @@ app.post("/api/terms", requireAuth, async (req, res) => {
       data: { name, startDate: new Date(startDate), endDate: new Date(endDate), status: "active", userId: req.userId },
     });
     res.status(201).json(term);
-  } catch (e) { console.error("create term:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "create term"); }
 });
 
 app.get("/api/terms", requireAuth, async (req, res) => {
   try {
     const terms = await prisma.term.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } });
     res.json(terms);
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get terms"); }
 });
 
 // ─── STUDENTS ─────────────────────────────────────────────────────────────────
@@ -416,7 +440,7 @@ app.get("/api/students", requireAuth, async (req, res) => {
       prisma.term.findFirst({ where: { userId: req.userId, status: "active" }, orderBy: { createdAt: "desc" } }),
     ]);
     res.json(recomputeOverdue(students, activeTerm?.startDate));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get students"); }
 });
 
 app.get("/api/students/unpaid", requireAuth, async (req, res) => {
@@ -436,7 +460,7 @@ app.get("/api/students/unpaid", requireAuth, async (req, res) => {
           days: s.daysOverdue > 0 ? s.daysOverdue + " days overdue" : "Pending",
         }))
     );
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get unpaid students"); }
 });
 
 app.get("/api/students/:id/payments", requireAuth, async (req, res) => {
@@ -478,7 +502,7 @@ app.get("/api/students/:id/payments", requireAuth, async (req, res) => {
       hasUnpaidPastTerm: termSummaries.some(t => t.status === "closed" && !t.cleared && t.paid < t.fee),
       allTermsCleared:   termSummaries.length > 0 && termSummaries.every(t => t.cleared),
     });
-  } catch (e) { console.error("student payments:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get student payments"); }
 });
 
 function generateAdm(schoolName, studentName, totalCount) {
@@ -535,8 +559,7 @@ app.post("/api/students", requireAuth, async (req, res) => {
     res.status(201).json(student);
   } catch (e) {
     if (e.code === "P2002") return res.status(400).json({ message: "Admission number conflict — please try again" });
-    console.error("create student:", e);
-    res.status(500).json({ message: "Something went wrong" });
+    return apiError(res, e, "create student");
   }
 });
 
@@ -673,7 +696,7 @@ app.patch("/api/students/:id", requireAuth, async (req, res) => {
       },
     });
     res.json(updated);
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "update student"); }
 });
 
 app.delete("/api/students/:id", requireAuth, async (req, res) => {
@@ -687,7 +710,7 @@ app.delete("/api/students/:id", requireAuth, async (req, res) => {
     await prisma.payment.deleteMany({ where: { studentId: req.params.id } });
     await prisma.student.delete({ where: { id: req.params.id } });
     res.json({ message: "Deleted" });
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "delete student"); }
 });
 
 // ─── STATS ────────────────────────────────────────────────────────────────────
@@ -732,7 +755,7 @@ app.get("/api/stats", requireAuth, async (req, res) => {
         { label: "Unpaid / Partial", value: unpaid + partial, sub: partial + " partial · " + unpaid + " not started", progress: problemPct, badge: (unpaid + partial) + " students", badgeBg: "var(--red-bg)", badgeColor: "var(--red)", iconBg: "var(--red-bg)", iconBorder: "var(--red-border)", iconColor: "var(--red)", iconPath: "M10 9H6M10 13H6m10 4H6M20 6H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2z", valueColor: "var(--red)", progressClass: "warn" },
       ],
     });
-  } catch (e) { console.error("stats:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get stats"); }
 });
 
 // ─── PAYMENTS ─────────────────────────────────────────────────────────────────
@@ -746,7 +769,7 @@ app.get("/api/payments/recent", requireAuth, async (req, res) => {
       txn: p.txnRef || "—", amount: "KES " + Number(p.amount).toLocaleString(), method: p.method,
       time: new Date(p.createdAt).toLocaleString("en-KE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
     })));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get recent payments"); }
 });
 
 app.get("/api/payments", requireAuth, async (req, res) => {
@@ -761,7 +784,7 @@ app.get("/api/payments", requireAuth, async (req, res) => {
       time: new Date(p.createdAt).toLocaleString("en-KE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
       createdAt: p.createdAt, studentId: p.studentId,
     })));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get all payments"); }
 });
 
 app.post("/api/payments", requireAuth, async (req, res) => {
@@ -798,7 +821,7 @@ app.post("/api/payments", requireAuth, async (req, res) => {
       time: "Just now", createdAt: payment.createdAt, studentId: payment.studentId,
       updatedStudent: { id: studentId, paid: newPaid, daysOverdue },
     });
-  } catch (e) { console.error("create payment:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "create payment"); }
 });
 
 app.delete("/api/payments/:id", requireAuth, async (req, res) => {
@@ -811,14 +834,14 @@ app.delete("/api/payments/:id", requireAuth, async (req, res) => {
     await prisma.student.update({ where: { id: payment.studentId }, data: { paid: newPaid } });
     await prisma.payment.delete({ where: { id: req.params.id } });
     res.json({ message: "Deleted", studentId: payment.studentId, amount: payment.amount });
-  } catch (e) { console.error("delete payment:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "delete payment"); }
 });
 
 app.get("/api/payments/unmatched", requireAuth, async (req, res) => {
   try {
     const list = await prisma.unmatchedPayment.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } });
     res.json(list.map(p => ({ id: p.id, phone: p.phone, txn: p.txnRef || "—", amount: "KES " + Number(p.amount).toLocaleString(), rawAmount: p.amount, time: new Date(p.createdAt).toLocaleString("en-KE") })));
-  } catch { res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "get unmatched payments"); }
 });
 
 app.post("/api/payments/unmatched/:id/assign", requireAuth, async (req, res) => {
@@ -833,7 +856,7 @@ app.post("/api/payments/unmatched/:id/assign", requireAuth, async (req, res) => 
     await prisma.student.update({ where: { id: studentId }, data: { paid: { increment: unmatched.amount } } });
     await prisma.unmatchedPayment.delete({ where: { id: req.params.id } });
     res.json({ message: "Assigned successfully" });
-  } catch (e) { console.error("assign unmatched:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "assign unmatched payment"); }
 });
 
 // ─── M-PESA STK PUSH ─────────────────────────────────────────────────────────
@@ -888,7 +911,7 @@ app.post("/api/payments/stk", requireAuth, requirePlan("mpesa"), async (req, res
     d.ResponseCode === "0"
       ? res.json({ success: true, checkoutRequestId: d.CheckoutRequestID })
       : res.status(400).json({ message: d.errorMessage || "STK push failed" });
-  } catch (e) { console.error("stk:", e); res.status(500).json({ message: "STK push failed" }); }
+  } catch (e) { return apiError(res, e, "STK push"); }
 });
 
 // ─── M-PESA CALLBACK ──────────────────────────────────────────────────────────
@@ -1114,7 +1137,7 @@ app.get("/i/:token", async (req, res) => {
 
     res.setHeader("Content-Type", "text/html");
     res.send(html);
-  } catch (e) { console.error("invoice page:", e); res.status(500).send("Server error"); }
+  } catch (e) { console.error("invoice page:", e); res.status(500).send("<!DOCTYPE html><html><body style='font-family:Arial;padding:40px;text-align:center'><h2 style='color:#c00'>Could not load invoice</h2><p>Something went wrong on our end. Please try again or contact the school directly.</p></body></html>"); }
 });
 
 // ─── PUBLIC RECEIPT PAGE ──────────────────────────────────────────────────────
@@ -1161,7 +1184,7 @@ app.get("/r/:token", async (req, res) => {
 
     res.setHeader("Content-Type", "text/html");
     res.send(html);
-  } catch (e) { console.error("receipt page:", e); res.status(500).send("Server error"); }
+  } catch (e) { console.error("receipt page:", e); res.status(500).send("<!DOCTYPE html><html><body style='font-family:Arial;padding:40px;text-align:center'><h2 style='color:#c00'>Could not load receipt</h2><p>Something went wrong on our end. Please try again or contact the school directly.</p></body></html>"); }
 });
 
 // ─── INVOICES API ─────────────────────────────────────────────────────────────
@@ -1169,7 +1192,7 @@ app.get("/api/invoices", requireAuth, async (req, res) => {
   try {
     const invoices = await prisma.invoice.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } });
     res.json(invoices);
-  } catch (e) { res.status(500).json({ message: "Failed to fetch invoices" }); }
+  } catch (e) { return apiError(res, e, "get invoices"); }
 });
 
 app.post("/api/invoices", requireAuth, requirePlan("invoices"), async (req, res) => {
@@ -1229,7 +1252,7 @@ app.post("/api/invoices", requireAuth, requirePlan("invoices"), async (req, res)
       }
     }
     res.json({ invoices: results, queued: sentOk, failed: smsFail, scheduled: !!sendDate, note: sentOk > 0 ? "SMS delivery confirmation will update when the telco confirms receipt." : undefined });
-  } catch (e) { console.error("create invoices:", e); res.status(500).json({ message: "Something went wrong" }); }
+  } catch (e) { return apiError(res, e, "create invoices"); }
 });
 
 app.post("/api/invoices/:id/resend", requireAuth, requirePlan("invoices"), async (req, res) => {
@@ -1252,7 +1275,7 @@ app.post("/api/invoices/:id/resend", requireAuth, requirePlan("invoices"), async
     }
     await prisma.invoice.update({ where: { id: invoice.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
     res.json({ ok: allOk });
-  } catch (e) { res.status(500).json({ message: "Resend failed" }); }
+  } catch (e) { return apiError(res, e, "resend invoice"); }
 });
 
 // ─── RECEIPTS API ─────────────────────────────────────────────────────────────
@@ -1260,7 +1283,7 @@ app.get("/api/receipts", requireAuth, async (req, res) => {
   try {
     const receipts = await prisma.receipt.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } });
     res.json(receipts);
-  } catch (e) { res.status(500).json({ message: "Failed to fetch receipts" }); }
+  } catch (e) { return apiError(res, e, "get receipts"); }
 });
 
 app.post("/api/receipts/manual", requireAuth, async (req, res) => {
@@ -1303,7 +1326,7 @@ app.post("/api/receipts/manual", requireAuth, async (req, res) => {
     }
     await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
     res.json({ ok: allOk, receipt });
-  } catch (e) { console.error("Manual receipt error:", e); res.status(500).json({ message: "Failed to send receipt" }); }
+  } catch (e) { return apiError(res, e, "send manual receipt"); }
 });
 
 app.post("/api/receipts/:id/resend", requireAuth, async (req, res) => {
@@ -1324,7 +1347,7 @@ app.post("/api/receipts/:id/resend", requireAuth, async (req, res) => {
     }
     await prisma.receipt.update({ where: { id: receipt.id }, data: { status: allOk ? "sent" : "failed", sentAt: new Date() } });
     res.json({ ok: allOk });
-  } catch (e) { res.status(500).json({ message: "Resend failed" }); }
+  } catch (e) { return apiError(res, e, "resend receipt"); }
 });
 
 // ─── AUTO-RECEIPT (Max plan) ──────────────────────────────────────────────────
@@ -1505,8 +1528,8 @@ app.post("/api/pay/:invoiceToken", payNowLimiter, async (req, res) => {
       res.status(400).json({ error: d.errorMessage || d.ResponseDescription || "STK push failed. Please try again." });
     }
   } catch (e) {
-    console.error("public pay now:", e);
-    res.status(500).json({ error: "Payment failed. Please try again." });
+    if (e.name === "AbortError") return res.status(504).json({ error: "M-Pesa timed out. Please try again." });
+    return res.status(500).json({ error: e.message?.includes("M-Pesa") ? e.message : "Payment failed. Please try again." });
   }
 });
 
@@ -1593,7 +1616,7 @@ app.get("/api/portal/:invoiceToken", async (req, res) => {
         time: new Date(r.paidAt).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" }),
       })),
     });
-  } catch (e) { console.error("portal api:", e); res.status(500).json({ error: "Server error" }); }
+  } catch (e) { return res.status(500).json({ error: "Could not load portal data. Please refresh the page." }); }
 });
 
 // ─── PARENT PORTAL PAGE ───────────────────────────────────────────────────────
