@@ -93,4 +93,26 @@ export const getAdminSubscriptions = async () => {
   return res.data;
 };
 
+export const getAdminInboxConversations = async (status) => {
+  const res = await api.get("/api/admin/inbox/conversations", {
+    params: status ? { status } : undefined,
+  });
+  return res.data;
+};
+
+export const getAdminInboxMessages = async (conversationId) => {
+  const res = await api.get(`/api/admin/inbox/conversations/${conversationId}/messages`);
+  return res.data;
+};
+
+export const sendAdminInboxReply = async (conversationId, body) => {
+  const res = await api.post(`/api/admin/inbox/conversations/${conversationId}/reply`, { body });
+  return res.data;
+};
+
+export const updateAdminInboxConversation = async (conversationId, updates) => {
+  const res = await api.patch(`/api/admin/inbox/conversations/${conversationId}`, updates);
+  return res.data;
+};
+
 export default api;
