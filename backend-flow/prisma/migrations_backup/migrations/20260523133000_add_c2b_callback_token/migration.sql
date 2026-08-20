@@ -1,0 +1,1 @@
+ALTER TABLE "User" ADD COLUMN "c2bCallbackToken" VARCHAR(128);

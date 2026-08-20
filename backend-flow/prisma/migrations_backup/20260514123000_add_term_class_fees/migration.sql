@@ -1,0 +1,1 @@
+ALTER TABLE "Term" ADD COLUMN "classFees" JSONB NOT NULL DEFAULT '{}';

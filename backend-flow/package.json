@@ -1,0 +1,41 @@
+{
+  "name": "feeflow-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "postinstall": "prisma generate",
+    "start": "node deploy-start.js",
+    "dev": "nodemon server.js",
+    "test": "node --test tests/*.test.js",
+    "ledger:audit": "node scripts/audit-ledger.js",
+    "ledger:scan-old-math": "node scripts/scan-old-math.js",
+    "ledger:migrate": "node scripts/migrate-legacy-ledger.js",
+    "ledger:audit-charges": "node scripts/audit-student-charges.js",
+    "ledger:debug-student": "node scripts/debug-student-ledger.js",
+    "ledger:void-duplicates": "node scripts/void-duplicate-student-charges.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@sparticuz/chromium": "^148.0.0",
+    "@supabase/supabase-js": "^2.106.1",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^8.4.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "pdf-parse": "^2.4.5",
+    "puppeteer-core": "^24.43.1",
+    "resend": "^6.12.2",
+    "zod": "^4.4.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "prisma": "^6.19.3",
+    "tsx": "^4.19.1"
+  }
+}

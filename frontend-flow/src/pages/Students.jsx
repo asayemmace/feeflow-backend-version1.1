@@ -1,0 +1,1133 @@
+import { useState, useMemo, useEffect, useRef } from "react";
+import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
+import { useOutletContext } from "react-router-dom";
+import Topbar from "../components/TopBar";
+import { useFeeStructure } from "../hooks/useFeeStructure";
+import useAppStore from "../store/useAppStore";
+import ImportStudentsModal from "../components/ImportStudentsModal";
+import Pagination from "../components/Pagination";
+import analytics from "../analytics/analytics";
+
+const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const PAGE_SIZE = 50;
+
+const safeNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+const clampPct = value => Math.max(0, Math.min(100, safeNumber(value)));
+const money = value => `KES ${safeNumber(value).toLocaleString()}`;
+
+const DISCOUNT_OPTIONS = [
+  { id: "none", name: "No discount" },
+  { id: "5", name: "5% off" },
+  { id: "10", name: "10% off" },
+  { id: "25", name: "25% off" },
+  { id: "custom", name: "Custom %" },
+];
+const discountPctForRow = row => {
+  if (!row) return 0;
+  if (row.discountType === "custom") return clampPct(row.discountValue);
+  const preset = Number(row.discountType);
+  return Number.isFinite(preset) && preset > 0 ? clampPct(preset) : 0;
+};
+const finalRowAmount = row => {
+  const base = safeNumber(row?.amount);
+  const pct = discountPctForRow(row);
+  return Math.round(base - (base * pct) / 100);
+};
+
+function computeStatus(totalCharges, totalPaid, outstanding = Math.max(0, Number(totalCharges || 0) - Number(totalPaid || 0))) {
+  if (safeNumber(totalCharges) <= 0) return "no_charges";
+  if (Number(outstanding || 0) <= 0 && Number(totalCharges || 0) > 0) return "paid";
+  if (Number(totalPaid || 0) <= 0) return "overdue";
+  return "partial";
+}
+
+function Badge({ status }) {
+  const map = { no_charges: { cls: "badge-partial", label: "No Charges" }, paid: { cls: "badge-paid", label: "Paid" }, partial: { cls: "badge-partial", label: "Partial" }, overdue: { cls: "badge-overdue", label: "Overdue" } };
+  const { cls, label } = map[status] || map.no_charges;
+  return <span className={cls}>{label}</span>;
+}
+
+function Avatar({ name, size = 32 }) {
+  const initials = name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
+  const hue      = (name.charCodeAt(0) * 37 + name.charCodeAt(name.length - 1) * 13) % 360;
+  return (
+    <div style={{ width: size, height: size, borderRadius: size > 40 ? 12 : 8, flexShrink: 0, background: `hsl(${hue},55%,28%)`, border: `1px solid hsl(${hue},55%,38%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.35, fontWeight: 600, color: `hsl(${hue},80%,78%)`, letterSpacing: 0.5 }}>
+      {initials}
+    </div>
+  );
+}
+
+function ProgressBar({ fee, paid, height = 4 }) {
+  const p = safeNumber(fee) > 0 ? clampPct((safeNumber(paid) / safeNumber(fee)) * 100) : 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ flex: 1, height, background: "var(--surface3)", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{ width: `${p}%`, height: "100%", borderRadius: 2, transition: "width .4s ease", background: p >= 100 ? "var(--green)" : p > 0 ? "var(--amber)" : "var(--red)" }} />
+      </div>
+      <span style={{ fontSize: 11, color: "var(--text3)", minWidth: 32, textAlign: "right" }}>{Math.round(p)}%</span>
+    </div>
+  );
+}
+
+function studentTableLedger(s) {
+  const charges = safeNumber(s.currentTermCharges);
+  const paid = safeNumber(s.currentTermPaid);
+  const balance = charges - paid;
+  return {
+    charges,
+    paid,
+    outstanding: balance,
+    pastOutstanding: Math.max(0, safeNumber(s.lifetimeOutstanding) - Math.max(0, balance)),
+  };
+}
+
+const TrashIcon = () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
+
+// ─── Edit Student Modal ───────────────────────────────────────────────────────
+function EditStudentModal({ student, onClose, token }) {
+  const { classes, feeTypes } = useFeeStructure();
+  const updateStudent = useAppStore(s => s.updateStudent);
+  const refreshStats = useAppStore(s => s.refreshStats);
+
+  const baseRows = Array.isArray(student.currentTermChargesList)
+    ? student.currentTermChargesList
+    : [];
+  const [form, setForm] = useState({ name: student.name || "", cls: student.cls || "", parentEmail: student.parentEmail || "", parentName: student.parentName || "", parentPhone: student.parentPhone || "" });
+  const [feeRows, setFeeRows] = useState(() => (
+    baseRows.length
+      ? baseRows.map(c => ({ id: c.id, type: c.type || "other", description: c.description || c.typeName || "Fee", amount: c.amount || 0, allocatedAmount: c.allocatedAmount || 0, discountType: "none", discountValue: "" }))
+      : [{ id: null, type: "tuition", description: "Tuition Fee", amount: student.currentTermCharges || student.totalCharges || 0, allocatedAmount: 0, discountType: "none", discountValue: "" }]
+  ));
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState("");
+  const userEditedRef = useRef(false);
+  const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+  const rowTypes = [
+    { id: "tuition", name: "Tuition Fee" },
+    { id: "transport", name: "Transport Fee" },
+    { id: "lunch", name: "Lunch Fee" },
+    { id: "exam", name: "Exam Fee" },
+    { id: "other", name: "Other" },
+    ...feeTypes.filter(ft => !["tuition", "transport", "lunch", "exam", "other", "others"].includes(ft.id)).map(ft => ({ id: ft.id, name: ft.name })),
+  ];
+  const setRow = (index, patch) => {
+    userEditedRef.current = true;
+    setFeeRows(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+  };
+  const addRow = () => {
+    userEditedRef.current = true;
+    setFeeRows(rows => [...rows, { id: null, type: "other", description: "Other Fee", amount: "", allocatedAmount: 0, discountType: "none", discountValue: "" }]);
+  };
+  const removeRow = (index) => {
+    const row = feeRows[index];
+    if (Number(row.allocatedAmount || 0) > 0) {
+      setError(`Cannot remove "${row.description}" because payments are already allocated to it.`);
+      return;
+    }
+    userEditedRef.current = true;
+    setFeeRows(rows => rows.filter((_, i) => i !== index));
+  };
+  const totalFee = feeRows.reduce((sum, row) => sum + finalRowAmount(row), 0);
+
+  useEffect(() => {
+    let active = true;
+    axios.get(`${API}/api/students/${student.id}/payments`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => {
+        if (!active || userEditedRef.current) return;
+        const activeSummary = (res.data.termSummaries || []).find(t => t.status === "active");
+        const charges = activeSummary?.charges || [];
+        if (charges.length) {
+          setFeeRows(charges.map(c => ({
+            id: c.id,
+            type: c.type || "other",
+            description: c.description || "Fee",
+            amount: c.amount || 0,
+            allocatedAmount: c.allocatedAmount || 0,
+            discountType: "none",
+            discountValue: "",
+          })));
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [student.id, token]);
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { setError("Name is required."); return; }
+    if (!form.cls)          { setError("Select a class."); return; }
+    if (!form.parentPhone.trim()) { setError("Parent phone is required."); return; }
+    if (feeRows.length === 0) { setError("Add at least one fee row."); return; }
+    for (const [index, row] of feeRows.entries()) {
+      if (!String(row.description || "").trim()) { setError(`Fee row ${index + 1} needs a description.`); return; }
+      if (safeNumber(row.amount) <= 0) { setError(`Fee row ${index + 1} must be greater than zero.`); return; }
+      if (finalRowAmount(row) <= 0) { setError(`Fee row ${index + 1}'s discount reduces the fee to zero or below.`); return; }
+    }
+    setSaving(true); setError("");
+    try {
+      const res = await axios.patch(`${API}/api/students/${student.id}`,
+        {
+          name: form.name.trim(),
+          cls: form.cls,
+          parentEmail: form.parentEmail.trim() || null,
+          parentName: form.parentName.trim() || null,
+          parentPhone: form.parentPhone.trim(),
+          feeBreakdown: feeRows.map(row => ({
+            id: row.id,
+            type: row.type,
+            typeName: rowTypes.find(t => t.id === row.type)?.name || row.description,
+            description: row.description,
+            amount: finalRowAmount(row),
+          })),
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      updateStudent(res.data);
+      analytics.track("student_updated", {
+        studentId: student.id,
+        className: form.cls,
+        totalCharges: totalFee,
+      });
+      refreshStats(token);
+      onClose();
+    } catch (e) { setError(e.response?.data?.message || "Failed to update student."); }
+    finally { setSaving(false); }
+  };
+
+  const inp = { width: "100%", padding: "10px 12px", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 8, color: "var(--text)", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} />
+      <div className="responsive-modal-panel" style={{ position: "fixed", top: "50%", left: "50%", zIndex: 60, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 620, background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 14, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", animation: "modalIn .18s ease", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Edit Student</div>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>{student.adm}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text2)", fontSize: 14 }}>×</button>
+        </div>
+        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          <div className="field-group">
+            <label className="settings-label">Full name *</label>
+            <input style={inp} value={form.name} onChange={setFv("name")} placeholder="Student name" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="field-group">
+              <label className="settings-label">Class *</label>
+              <select style={{ ...inp, cursor: "pointer" }} value={form.cls} onChange={setFv("cls")}>
+                <option value="">Select…</option>
+                {classes.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="field-group">
+              <label className="settings-label">Parent email</label>
+              <input style={inp} type="email" value={form.parentEmail} onChange={setFv("parentEmail")} placeholder="e.g. parent@email.com" />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="field-group">
+              <label className="settings-label">Parent / Guardian name</label>
+              <input style={inp} value={form.parentName} onChange={setFv("parentName")} placeholder="e.g. Hassan Farah" />
+            </div>
+            <div className="field-group">
+              <label className="settings-label">Parent phone *</label>
+              <input style={inp} value={form.parentPhone} onChange={setFv("parentPhone")} placeholder="07XX XXX XXX" />
+            </div>
+          </div>
+          <div className="field-group">
+            <label className="settings-label">Fee breakdown *</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {feeRows.map((row, index) => {
+                const discountPct = discountPctForRow(row);
+                const discounted = finalRowAmount(row);
+                return (
+                <div key={row.id || index} style={{ display: "grid", gridTemplateColumns: "120px 1fr 100px 150px 34px", gap: 8, alignItems: "center", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 9, padding: 10 }}>
+                  <select style={{ ...inp, height: 38, padding: "0 8px" }} value={row.type} onChange={e => {
+                    const nextType = e.target.value;
+                    const label = rowTypes.find(t => t.id === nextType)?.name || row.description;
+                    setRow(index, { type: nextType, description: row.description || label });
+                  }}>
+                    {rowTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <input style={{ ...inp, height: 38 }} value={row.description} onChange={e => setRow(index, { description: e.target.value })} placeholder="Description" />
+                  <input type="number" min="0" style={{ ...inp, height: 38, textAlign: "right" }} value={row.amount} onChange={e => setRow(index, { amount: e.target.value })} placeholder="0" />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <select style={{ ...inp, height: 38, padding: "0 8px" }} value={row.discountType || "none"} onChange={e => {
+                      const nextType = e.target.value;
+                      setRow(index, nextType === "custom" ? { discountType: nextType } : { discountType: nextType, discountValue: "" });
+                    }}>
+                      {DISCOUNT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    {row.discountType === "custom" && (
+                      <input type="number" min="0" max="100" style={{ ...inp, height: 30, padding: "0 8px", textAlign: "right", fontSize: 12 }} value={row.discountValue} onChange={e => setRow(index, { discountValue: e.target.value })} placeholder="% off" />
+                    )}
+                  </div>
+                  <button onClick={() => removeRow(index)} title={row.allocatedAmount > 0 ? "Cannot remove allocated charge" : "Remove fee row"} style={{ width: 34, height: 34, borderRadius: 8, background: row.allocatedAmount > 0 ? "var(--surface3)" : "var(--red-bg)", border: `1px solid ${row.allocatedAmount > 0 ? "var(--border)" : "var(--red-border)"}`, color: row.allocatedAmount > 0 ? "var(--text3)" : "var(--red)", cursor: row.allocatedAmount > 0 ? "not-allowed" : "pointer" }}>
+                    <TrashIcon />
+                  </button>
+                  {discountPct > 0 && (
+                    <div style={{ gridColumn: "1 / -1", fontSize: 11.5, color: "var(--green)" }}>
+                      {discountPct}% off KES {safeNumber(row.amount).toLocaleString()} → charges <strong>KES {discounted.toLocaleString()}</strong>
+                    </div>
+                  )}
+                  {row.allocatedAmount > 0 && <div style={{ gridColumn: "1 / -1", fontSize: 11.5, color: "var(--amber)" }}>KES {safeNumber(row.allocatedAmount).toLocaleString()} already paid toward this charge.</div>}
+                </div>
+                );
+              })}
+            </div>
+            <button onClick={addRow} style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "var(--green-bg)", border: "1px solid var(--green-border)", color: "var(--green)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>+ Add fee row</button>
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--green-bg)", border: "1px solid var(--green-border)", borderRadius: 9, padding: "10px 12px" }}>
+              <span style={{ fontSize: 12.5, color: "var(--text2)" }}>Total charges</span>
+              <strong style={{ color: "var(--green)", fontSize: 15 }}>KES {totalFee.toLocaleString()}</strong>
+            </div>
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red-border)", borderRadius: 8, padding: "10px 12px" }}>✕ {error}</div>}
+        </div>
+        <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: saving ? "var(--surface2)" : "var(--green)", border: "none", color: saving ? "var(--text3)" : "#0b1a14", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Delete Student Confirm Modal ─────────────────────────────────────────────
+function DeleteStudentModal({ student, onClose, token, onDeleted }) {
+  const removeStudent = useAppStore(s => s.removeStudent);
+  const refreshStats  = useAppStore(s => s.refreshStats);
+  const [deleting, setDeleting] = useState(false);
+  const [error,    setError]    = useState("");
+
+  const handleDelete = async () => {
+    setDeleting(true); setError("");
+    try {
+      await axios.delete(`${API}/api/students/${student.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      removeStudent(student.id);
+      analytics.track("student_deleted", {
+        studentId: student.id,
+        className: student.cls,
+      });
+      refreshStats(token);
+      onDeleted();
+      onClose();
+    } catch (e) { setError(e.response?.data?.message || "Failed to delete student."); }
+    finally { setDeleting(false); }
+  };
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)" }} />
+      <div className="responsive-modal-panel" style={{ position: "fixed", top: "50%", left: "50%", zIndex: 70, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 400, background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 14, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", padding: 24, animation: "modalIn .18s ease" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--red-bg)", border: "1px solid var(--red-border)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--red)", flexShrink: 0 }}><TrashIcon /></div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Remove Student?</div>
+            <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 2 }}>This will permanently delete their record</div>
+          </div>
+        </div>
+        <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 9, padding: "12px 14px", marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>{student.name}</div>
+          <div style={{ fontSize: 12, color: "var(--text3)" }}>{student.cls} · {student.adm}</div>
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--amber)", background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 8, padding: "10px 12px", marginBottom: 16 }}>
+          ⚠ This will also delete all payment records for this student. This cannot be undone.
+        </div>
+        {error && <div style={{ fontSize: 12.5, color: "var(--red)", marginBottom: 12 }}>{error}</div>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={handleDelete} disabled={deleting} style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: deleting ? "var(--surface2)" : "var(--red)", border: "none", color: deleting ? "var(--text3)" : "#fff", cursor: deleting ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+            {deleting ? "Removing…" : "Remove student"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Student Profile Modal ─────────────────────────────────────────────────────
+function StudentProfileModal({ studentId, onClose, onEdit, token }) {
+  const { hasPermission } = useAuth();
+  const canEditStudents   = hasPermission('students.edit');
+  const canDeleteStudents = hasPermission('students.delete');
+  const [data,          setData]          = useState(null);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState("");
+  const [showDeleteStu, setShowDeleteStu] = useState(false);
+
+  useEffect(() => {
+    const loadProfile = () => {
+      setLoading(true);
+      axios.get(`${API}/api/students/${studentId}/payments`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => setData(r.data))
+      .catch(() => setError("Failed to load profile."))
+      .finally(() => setLoading(false));
+    };
+    loadProfile();
+    const refresh = e => {
+      if (!e.detail?.studentId || e.detail.studentId === studentId) loadProfile();
+    };
+    window.addEventListener("ff:student-profile-refresh", refresh);
+    return () => window.removeEventListener("ff:student-profile-refresh", refresh);
+  }, [studentId, token]);
+
+  const methodColor = { mpesa: "var(--green)", bank: "var(--blue)", cash: "var(--amber)", manual: "var(--text3)" };
+  const methodLabel = { mpesa: "M-Pesa", bank: "Bank", cash: "Cash", manual: "Manual" };
+  const currentTermCharges = safeNumber(data?.student?.currentTermCharges);
+  const currentTermPaid = safeNumber(data?.student?.currentTermPaid);
+  const currentTermBalance = Number.isFinite(Number(data?.student?.currentTermBalance))
+    ? Number(data.student.currentTermBalance)
+    : currentTermCharges - currentTermPaid;
+  const currentTermPaidPct = currentTermCharges > 0 ? clampPct((currentTermPaid / currentTermCharges) * 100) : 0;
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} />
+      <div className="responsive-modal-panel" style={{ position: "fixed", top: "50%", left: "50%", zIndex: 50, transform: "translate(-50%,-50%)", width: "100%", maxWidth: 520, background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", maxHeight: "90vh", animation: "modalIn .2s ease" }}>
+
+        {/* Header */}
+        <div style={{ padding: "18px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Student Profile</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {data && canEditStudents && (
+              <button onClick={() => onEdit(data.student)}
+                style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>
+                ✏ Edit
+              </button>
+            )}
+            <button onClick={onClose}
+              style={{ width: 30, height: 30, borderRadius: 7, background: "var(--surface2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--text2)", fontSize: 14 }}
+              onMouseEnter={e => { e.currentTarget.style.color = "var(--red)"; e.currentTarget.style.borderColor = "var(--red-border)"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = "var(--text2)"; e.currentTarget.style.borderColor = "var(--border)"; }}>
+              ×
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: "auto", flex: 1, WebkitOverflowScrolling: "touch" }}>
+          {loading ? (
+            <div style={{ padding: "48px 20px", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>
+              <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2px solid var(--border)", borderTop: "2px solid var(--green)", animation: "spin .7s linear infinite", margin: "0 auto 12px" }} />
+              Loading profile…
+            </div>
+          ) : error ? (
+            <div style={{ padding: 32, textAlign: "center", color: "var(--red)", fontSize: 13 }}>{error}</div>
+          ) : data && (
+            <div style={{ padding: 20 }}>
+              {/* Summary card */}
+              <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <Avatar name={data.student.name} size={48} />
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", marginBottom: 2 }}>{data.student.name}</div>
+                    <div style={{ fontSize: 12.5, color: "var(--text3)" }}>
+                      {data.student.cls} &nbsp;·&nbsp; {data.student.adm}
+                    </div>
+                    {(data.student.parentName || data.student.parentPhone || data.student.parentEmail) && (
+                      <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span style={{ color: "var(--text2)" }}>👤 Parent:</span>
+                        {data.student.parentName && <span>{data.student.parentName}</span>}
+                        {data.student.parentPhone && (
+                          <a href={`tel:${data.student.parentPhone}`} style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 500 }}>{data.student.parentPhone}</a>
+                        )}
+                        {data.student.parentEmail && (
+                          <a href={`mailto:${data.student.parentEmail}`} style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 500 }}>{data.student.parentEmail}</a>
+                        )}
+                      </div>
+                    )}
+                    {data.student.bankPaymentReference && (
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 7, padding: "4px 8px", borderRadius: 7, background: "var(--blue-bg)", border: "1px solid var(--blue-border)", color: "var(--blue)", fontSize: 11.5, fontWeight: 700 }}>
+                        Bank ref <span style={{ fontFamily: "monospace" }}>{data.student.bankPaymentReference}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Cross-term status */}
+                {data.allTermsCleared ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--green-bg)", border: "1px solid var(--green-border)", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+                    <span>✅</span>
+                    <span style={{ fontSize: 12.5, color: "var(--green)", fontWeight: 600 }}>All terms paid — no outstanding balance</span>
+                  </div>
+                ) : data.hasUnpaidPastTerm ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--red-bg)", border: "1px solid var(--red-border)", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+                    <span>⚠️</span>
+                    <span style={{ fontSize: 12.5, color: "var(--red)", fontWeight: 600 }}>Has unpaid balance from a previous term</span>
+                  </div>
+                ) : null}
+
+                {/* Fee stats */}
+                <div style={{ fontSize: 12, color: "var(--text3)", fontWeight: 600, marginBottom: 8 }}>
+                  Current Term: <span style={{ color: "var(--text)" }}>{data.student.currentTermName || "No active term"}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                  {[
+                    { label: "Term Charges", value: money(currentTermCharges), color: "var(--text)" },
+                    { label: "Term Paid",    value: money(currentTermPaid), color: "var(--green)" },
+                    { label: "Term Balance", value: currentTermBalance === 0 ? "Cleared" : money(currentTermBalance), color: currentTermBalance <= 0 ? "var(--green)" : "var(--red)" },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.5px" }}>{s.value}</div>
+                      <div style={{ fontSize: 10.5, color: "var(--text3)", marginTop: 3, textTransform: "uppercase", letterSpacing: ".6px" }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+                <ProgressBar fee={currentTermCharges} paid={currentTermPaid} height={6} />
+                <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 5 }}>
+                  {Math.round(currentTermPaidPct)}% of current term charges paid
+                  {currentTermBalance > 0 && data.student.daysOverdue > 0 && <span style={{ marginLeft: 10, color: "var(--red)" }}>· {data.student.daysOverdue} days overdue</span>}
+                  {data.student.creditBalance > 0 && <span style={{ marginLeft: 10, color: "var(--green)", fontWeight: 600 }}>· Credit available: KES {Number(data.student.creditBalance).toLocaleString()}</span>}
+                </div>
+              </div>
+
+              <div style={{ marginTop: -18, marginBottom: 18, padding: "12px 16px", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {[
+                  { label: "All-time charges", value: money(data.student.totalCharges), color: "var(--text)" },
+                  { label: "All-time paid", value: money(data.student.totalPaid), color: "var(--green)" },
+                  { label: "All-time balance", value: safeNumber(data.student.outstanding) <= 0 ? "Cleared" : money(data.student.outstanding), color: safeNumber(data.student.outstanding) <= 0 ? "var(--green)" : "var(--red)" },
+                ].map(s => (
+                  <div key={s.label} style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: s.color, fontVariantNumeric: "tabular-nums" }}>{s.value}</div>
+                    <div style={{ fontSize: 9.5, color: "var(--text3)", marginTop: 3, textTransform: "uppercase", letterSpacing: ".5px" }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Term history */}
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: ".8px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                <span>💳</span> Term History
+              </div>
+
+              {data.termSummaries.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text3)", fontSize: 13 }}>No payments recorded yet.</div>
+              ) : data.termSummaries.map(term => (
+                <div key={term.termId} style={{ marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{term.termName}</span>
+                      {term.status === "active" && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: "var(--green-bg)", color: "var(--green)", border: "1px solid var(--green-border)" }}>ACTIVE</span>}
+                    </div>
+                    {term.cleared
+                      ? <span style={{ fontSize: 11, fontWeight: 600, color: "var(--green)", background: "var(--green-bg)", border: "1px solid var(--green-border)", padding: "2px 8px", borderRadius: 20 }}>✓ Cleared</span>
+                      : <span style={{ fontSize: 11, fontWeight: 600, color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red-border)", padding: "2px 8px", borderRadius: 20 }}>Balance owed</span>
+                    }
+                  </div>
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+                    {term.payments.length === 0
+                      ? <div style={{ padding: "16px 18px", fontSize: 12.5, color: "var(--text3)" }}>No payments this term.</div>
+                      : term.payments.map((p, i) => (
+                        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderBottom: i < term.payments.length - 1 ? "1px solid var(--border)" : "none", transition: "background .1s" }}
+                          onMouseEnter={e => e.currentTarget.style.background = "var(--surface)"}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          {/* Icon */}
+                          <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: methodColor[p.method] ? `${methodColor[p.method]}22` : "var(--surface)", border: `1px solid ${methodColor[p.method] ? `${methodColor[p.method]}44` : "var(--border)"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+                            {p.method === "mpesa" ? "📱" : p.method === "bank" ? "🏦" : p.method === "cash" ? "💵" : "💳"}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                              <span style={{ fontSize: 13.5, fontWeight: 600, color: methodColor[p.method] || "var(--text)" }}>{methodLabel[p.method] || p.method}</span>
+                              {p.txnRef && <span style={{ fontFamily: "monospace", fontSize: 10.5, background: "var(--surface3)", padding: "1px 7px", borderRadius: 4, border: "1px solid var(--border)", color: "var(--text3)" }}>{p.txnRef}</span>}
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--text3)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <span>🕒 {p.time}</span>
+                              {p.feeBreakdown?.length > 0 && p.feeBreakdown.map((fb, fi) => (
+                                <span key={fi} style={{ fontSize: 10.5, padding: "1px 7px", borderRadius: 4, background: "var(--green-bg)", border: "1px solid var(--green-border)", color: "var(--accent)", fontWeight: 600 }}>{fb.typeName}</span>
+                              ))}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right", flexShrink: 0 }}>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--green)", fontVariantNumeric: "tabular-nums" }}>+{money(p.amount)}</div>
+                          </div>
+                        </div>
+                      ))
+                    }
+                    {term.charges?.length > 0 && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", background: "var(--surface)" }}>
+                        <div style={{ fontSize: 11, color: "var(--text3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>Charges</div>
+                        {term.charges.map(charge => (
+                          <div key={charge.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, color: "var(--text2)", padding: "4px 0" }}>
+                            <span>{charge.description || charge.type || "Charge"}</span>
+                            <strong style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{money(charge.amount)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, padding: "11px 16px", background: "var(--surface3)", borderTop: "1px solid var(--border)" }}>
+                      <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 500 }}>Charges: <strong style={{ color: "var(--text)" }}>{money(term.totalCharges)}</strong></span>
+                      <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 500 }}>Paid: <strong style={{ color: "var(--green)" }}>{money(term.totalPaid)}</strong></span>
+                      <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 500 }}>Balance: <strong style={{ color: safeNumber(term.outstanding) > 0 ? "var(--red)" : "var(--green)" }}>{safeNumber(term.outstanding) > 0 ? money(term.outstanding) : "Cleared"}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Delete student — at the bottom, clearly separated */}
+              {canDeleteStudents && (
+                <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 12, color: "var(--text3)", marginBottom: 10 }}>
+                    Danger zone — only remove students who have left the school.
+                  </div>
+                  <button
+                    onClick={() => setShowDeleteStu(true)}
+                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--red-bg)", border: "1px solid var(--red-border)", color: "var(--red)", cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "var(--red)"; e.currentTarget.style.color = "#fff"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "var(--red-bg)"; e.currentTarget.style.color = "var(--red)"; }}
+                  >
+                    <TrashIcon /> Remove student from school
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Delete student confirm — higher z-index so it overlays the profile modal */}
+      {showDeleteStu && data && (
+        <DeleteStudentModal
+          student={data.student}
+          token={token}
+          onClose={() => setShowDeleteStu(false)}
+          onDeleted={onClose}
+        />
+      )}
+
+      <style>{`@keyframes modalIn{from{opacity:0;transform:translate(-50%,-48%)}to{opacity:1;transform:translate(-50%,-50%)}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </>
+  );
+}
+
+// ─── Fee Type Selector ────────────────────────────────────────────────────────
+function FeeTypeSelector({ feeTypes, selectedIds, onToggle, className, feeMatrix, onFeeChange }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {feeTypes.map(ft => {
+        const isSelected = selectedIds.includes(ft.id);
+        const amount     = feeMatrix?.[className]?.[ft.id] || 0;
+        return (
+          <div key={ft.id} style={{ display: "flex", alignItems: "center", gap: 10, background: isSelected ? "var(--green-bg)" : "var(--surface2)", border: `1px solid ${isSelected ? "var(--green-border)" : "var(--border)"}`, borderRadius: 9, padding: "10px 14px", transition: "all .15s" }}>
+            <div onClick={() => onToggle(ft.id)} style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, border: `2px solid ${isSelected ? "var(--green)" : "var(--text3)"}`, background: isSelected ? "var(--green)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+              {isSelected && <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#0b1a14" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </div>
+            <span onClick={() => onToggle(ft.id)} style={{ flex: 1, fontSize: 13.5, color: isSelected ? "var(--text)" : "var(--text2)", fontWeight: isSelected ? 500 : 400, cursor: "pointer" }}>{ft.name}</span>
+            {isSelected
+              ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11.5, color: "var(--text3)" }}>KES</span>
+                  <input type="number" min="0" value={amount || ""}
+                    onChange={e => { const num = e.target.value === "" ? "" : String(parseInt(e.target.value, 10) || 0); onFeeChange(ft.id, num); }}
+                    placeholder="0"
+                    style={{ width: 90, padding: "5px 8px", textAlign: "right", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 6, color: "var(--text)", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                </div>
+              : amount > 0 && <span style={{ fontSize: 12, color: "var(--text3)", fontVariantNumeric: "tabular-nums" }}>KES {amount.toLocaleString()}</span>
+            }
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Add Student Modal ─────────────────────────────────────────────────────────
+function AddStudentModal({ onClose }) {
+  const { token }  = useAuth();
+  const { classes, feeTypes, feeMatrix } = useFeeStructure();
+  const addStudent   = useAppStore(s => s.addStudent);
+  const refreshStats = useAppStore(s => s.refreshStats);
+
+  const [step,     setStep]     = useState(1);
+  const [saving,   setSaving]   = useState(false);
+  const [apiError, setApiError] = useState("");
+  const [errors,   setErrors]   = useState({});
+  const [form,     setForm]     = useState({ name: "", adm: "", cls: "", parentEmail: "", parentName: "", parentPhone: "", selectedFeeTypes: [], paidAmount: "", othersLabel: "" });
+  const [localFees, setLocalFees] = useState({});
+
+  const setFv = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+  const setF  = k => v => setForm(f => ({ ...f, [k]: v }));
+
+  // Auto-populate fees when class changes
+  const [lastCls, setLastCls] = useState("");
+  if (form.cls !== lastCls) {
+    setLastCls(form.cls);
+    if (form.cls) {
+      const fees = {};
+      feeTypes.forEach(ft => { fees[ft.id] = feeMatrix?.[form.cls]?.[ft.id] || 0; });
+      setLocalFees(fees);
+      const preselect = feeTypes.filter(ft => fees[ft.id] > 0).map(ft => ft.id);
+      setForm(f => ({ ...f, selectedFeeTypes: preselect }));
+    }
+  }
+
+  const handleFeeChange     = (id, val) => setLocalFees(prev => ({ ...prev, [id]: Number(val) || 0 }));
+  const handleToggleFeeType = id => setForm(f => ({
+    ...f,
+    selectedFeeTypes: f.selectedFeeTypes.includes(id)
+      ? f.selectedFeeTypes.filter(x => x !== id)
+      : [...f.selectedFeeTypes, id],
+  }));
+
+  const totalDue = form.selectedFeeTypes.reduce((s, id) => s + (localFees[id] || 0), 0);
+  const paidNum  = parseFloat(form.paidAmount) || 0;
+  const balance  = totalDue - paidNum;
+  const status   = computeStatus(totalDue, paidNum);
+  const selectedOthers = form.selectedFeeTypes.includes("others");
+
+  const inp = { width: "100%", height: 42, padding: "0 12px", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 8, color: "var(--text)", fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
+  const statusColors = { paid: "var(--green)", partial: "var(--amber)", overdue: "var(--red)" };
+  const statusLabels = { paid: "Paid in full", partial: "Partial payment", overdue: "No payment" };
+
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim())                          e.name        = "Required";
+    if (!form.parentPhone.trim())                   e.parentPhone = "Parent phone is required";
+    if (!form.cls)                                  e.cls         = "Select a class";
+    if (form.selectedFeeTypes.length === 0)         e.fees        = "Select at least one fee type";
+    if (totalDue <= 0)                              e.fees        = "Total fee must be > 0";
+    if (paidNum < 0)                                e.paid        = "Cannot be negative";
+    // Overpayment is allowed — it creates a CreditMemo on the backend. Just warn, don't block.
+    if (paidNum > totalDue)                         e.paid        = `Payment exceeds total by KES ${(paidNum - totalDue).toLocaleString()} — excess will be tracked as a credit`;
+    if (selectedOthers && !form.othersLabel.trim()) e.others      = "Specify the 'Others' description";
+    return e;
+  };
+
+  const handleNext = () => { const e = validate(); if (Object.keys(e).length) { setErrors(e); return; } setErrors({}); setStep(2); };
+
+  const handleSubmit = async () => {
+    setSaving(true); setApiError("");
+    try {
+      const feeBreakdown = form.selectedFeeTypes.map(id => ({
+        typeId: id,
+        typeName: id === "others" ? form.othersLabel : feeTypes.find(ft => ft.id === id)?.name || id,
+        amount: localFees[id] || 0,
+      }));
+      const res = await axios.post(`${API}/api/students`,
+        { name: form.name.trim(), adm: form.adm.trim(), cls: form.cls, parentEmail: form.parentEmail.trim() || null, parentName: form.parentName.trim() || null, parentPhone: form.parentPhone.trim(), fee: totalDue, paid: paidNum, feeBreakdown, status },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      addStudent(res.data);
+      analytics.track("student_created", {
+        studentId: res.data?.id,
+        className: form.cls,
+        amount: totalDue,
+        initialPaidAmount: paidNum,
+      });
+      refreshStats(token);
+      onClose();
+    } catch (e) { setApiError(e.response?.data?.message || "Failed to save student."); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <div className="modal-backdrop" onClick={onClose} />
+      <div className="modal-box" style={{ maxWidth: 520 }}>
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">{step === 1 ? "Add new student" : "Confirm & save"}</div>
+            <div className="modal-sub">{step === 1 ? "Enter student info and fee details" : "Review before saving"}</div>
+          </div>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+
+        <div style={{ display: "flex", borderBottom: "1px solid var(--border)", padding: "0 22px", flexShrink: 0 }}>
+          {["Student Info & Fees", "Review & Save"].map((label, i) => (
+            <div key={i} onClick={() => i + 1 < step && setStep(i + 1)} style={{ padding: "10px 0", marginRight: 20, fontSize: 12, fontWeight: 500, color: step === i + 1 ? "var(--accent)" : "var(--text3)", borderBottom: `2px solid ${step === i + 1 ? "var(--accent)" : "transparent"}`, cursor: i + 1 < step ? "pointer" : "default", transition: "all .15s", minHeight: 40, display: "flex", alignItems: "center" }}>
+              {label}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: "20px 22px", overflowY: "auto", maxHeight: "60vh", WebkitOverflowScrolling: "touch" }}>
+          {step === 1 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div className="field-group">
+                <label className="settings-label">Student full name *</label>
+                <input style={inp} value={form.name} onChange={setFv("name")} placeholder="e.g. Amina Wanjiru" autoComplete="off" />
+                {errors.name && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.name}</div>}
+              </div>
+              <div className="field-group">
+                <label className="settings-label">Admission number <span style={{ fontWeight: 400, color: "var(--text3)", textTransform: "none" }}>(optional)</span></label>
+                <input style={inp} value={form.adm} onChange={setFv("adm")} placeholder="e.g. ADM-0001" autoComplete="off" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div className="field-group">
+                  <label className="settings-label">Parent / Guardian name</label>
+                  <input style={inp} value={form.parentName} onChange={setFv("parentName")} placeholder="e.g. Hassan Farah" autoComplete="off" />
+                </div>
+                <div className="field-group">
+                  <label className="settings-label">Parent phone *</label>
+                  <input style={{ ...inp, borderColor: errors.parentPhone ? "var(--red)" : undefined }} value={form.parentPhone} onChange={setFv("parentPhone")} placeholder="07XX XXX XXX" />
+                  {errors.parentPhone && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.parentPhone}</div>}
+                </div>
+              </div>
+              <div className="field-group">
+                <label className="settings-label">Parent email <span style={{ fontWeight: 400, color: "var(--text3)", textTransform: "none" }}>(optional)</span></label>
+                <input style={inp} type="email" value={form.parentEmail} onChange={setFv("parentEmail")} placeholder="e.g. parent@email.com" />
+              </div>
+              <div className="field-group">
+                <label className="settings-label">Class *</label>
+                <select style={{ ...inp, cursor: "pointer" }} value={form.cls} onChange={e => setF("cls")(e.target.value)}>
+                  <option value="">Select class…</option>
+                  {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                {errors.cls && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.cls}</div>}
+              </div>
+
+              {form.cls && (
+                <>
+                  <div>
+                    <label className="settings-label" style={{ marginBottom: 8, display: "block" }}>
+                      Fee types * <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 400, textTransform: "none" }}>auto-filled from fee structure</span>
+                    </label>
+                    <FeeTypeSelector feeTypes={feeTypes} selectedIds={form.selectedFeeTypes} onToggle={handleToggleFeeType} className={form.cls} feeMatrix={{ [form.cls]: localFees }} onFeeChange={handleFeeChange} />
+                    {errors.fees && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 6 }}>{errors.fees}</div>}
+                  </div>
+                  {selectedOthers && (
+                    <div className="field-group" style={{ background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 9, padding: "12px 14px" }}>
+                      <label className="settings-label">Specify "Others" fee description *</label>
+                      <input style={inp} value={form.othersLabel} onChange={setFv("othersLabel")} placeholder="e.g. Exam registration, Uniform…" />
+                      {errors.others && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.others}</div>}
+                    </div>
+                  )}
+                  {form.selectedFeeTypes.length > 0 && (
+                    <div style={{ background: "var(--green-bg)", border: "1px solid var(--green-border)", borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 2 }}>Total fee due</div>
+                        <div style={{ fontSize: 20, fontFamily: "'DM Serif Display',serif", color: "var(--green)", lineHeight: 1 }}>KES {totalDue.toLocaleString()}</div>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text3)", textAlign: "right" }}>{form.selectedFeeTypes.length} fee type{form.selectedFeeTypes.length !== 1 ? "s" : ""}</div>
+                    </div>
+                  )}
+                  <div className="field-group">
+                    <label className="settings-label">Amount already paid <span style={{ fontWeight: 400, textTransform: "none" }}>(leave 0 if none)</span></label>
+                    <div style={{ position: "relative" }}>
+                      <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "var(--text3)", pointerEvents: "none" }}>KES</span>
+                      <input type="number" min="0" max={totalDue} style={{ ...inp, paddingLeft: 44 }} value={form.paidAmount} onChange={setFv("paidAmount")} placeholder="0" />
+                    </div>
+                    {errors.paid && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 4 }}>{errors.paid}</div>}
+                    {totalDue > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColors[status], flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, color: statusColors[status], fontWeight: 500 }}>{statusLabels[status]}</span>
+                        {balance > 0 && <span style={{ fontSize: 12, color: "var(--text3)" }}>· KES {balance.toLocaleString()} balance</span>}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+              {!form.cls && <div style={{ fontSize: 13, color: "var(--text3)", textAlign: "center", padding: "16px 0", borderTop: "1px solid var(--border)" }}>Select a class to configure fees</div>}
+            </div>
+          )}
+
+          {step === 2 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ background: "var(--surface2)", borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)" }}>
+                {[
+                ["Name", form.name],
+                ["Class", form.cls],
+                form.parentName ? ["Parent Name", form.parentName] : null,
+                ["Parent Phone", form.parentPhone],
+                form.parentEmail ? ["Parent Email", form.parentEmail] : null,
+                ["Adm No.", form.adm],
+              ].filter(Boolean).map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: 12.5, color: "var(--text3)" }}>{k}</span>
+                    <span style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background: "var(--surface2)", borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", fontSize: 11.5, fontWeight: 600, color: "var(--text3)", textTransform: "uppercase", letterSpacing: 0.8 }}>Fee Breakdown</div>
+                {form.selectedFeeTypes.map(id => {
+                  const ft = feeTypes.find(f => f.id === id);
+                  const name = id === "others" ? form.othersLabel : ft?.name || id;
+                  return (
+                    <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "9px 14px", borderBottom: "1px solid var(--border)" }}>
+                      <span style={{ fontSize: 13, color: "var(--text2)" }}>{name}</span>
+                      <span style={{ fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>KES {(localFees[id] || 0).toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", background: "var(--green-bg)" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Total Due</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "var(--green)", fontVariantNumeric: "tabular-nums" }}>KES {totalDue.toLocaleString()}</span>
+                </div>
+              </div>
+              <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 12.5, color: "var(--text3)", marginBottom: 3 }}>Paid / Balance</div>
+                  <div style={{ fontSize: 14, fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ color: "var(--green)", fontWeight: 600 }}>KES {paidNum.toLocaleString()}</span>
+                    <span style={{ color: "var(--text3)" }}> / KES {Math.max(0, balance).toLocaleString()}</span>
+                  </div>
+                </div>
+                <div style={{ padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: status === "paid" ? "var(--green-bg)" : status === "partial" ? "var(--amber-bg)" : "var(--red-bg)", color: statusColors[status], border: `1px solid ${status === "paid" ? "var(--green-border)" : status === "partial" ? "var(--amber-border)" : "var(--red-border)"}` }}>
+                  {statusLabels[status]}
+                </div>
+              </div>
+              {apiError && <div style={{ fontSize: 12.5, color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red-border)", borderRadius: 8, padding: "10px 14px" }}>✕ {apiError}</div>}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 22px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <button onClick={() => step > 1 ? setStep(1) : onClose()} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 13, background: "transparent", border: "1px solid var(--border)", color: "var(--text2)", cursor: "pointer", fontFamily: "inherit" }}>
+            {step > 1 ? "← Back" : "Cancel"}
+          </button>
+          {step === 1
+            ? <button onClick={handleNext} disabled={!form.cls} style={{ padding: "9px 22px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: form.cls ? "var(--accent)" : "var(--surface2)", border: "none", color: form.cls ? "#0b1a14" : "var(--text3)", cursor: form.cls ? "pointer" : "not-allowed", fontFamily: "inherit" }}>Review →</button>
+            : <button onClick={handleSubmit} disabled={saving} style={{ padding: "9px 22px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: saving ? "var(--surface2)" : "var(--accent)", border: "none", color: saving ? "var(--text3)" : "#0b1a14", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Save Student ✓"}</button>
+          }
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Student Card (mobile) ─────────────────────────────────────────────────────
+function StudentCard({ s, onClick }) {
+  const display = studentTableLedger(s);
+  const status  = computeStatus(display.charges, display.paid, display.outstanding);
+  const balance = display.outstanding;
+  return (
+    <div onClick={onClick} style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", cursor: "pointer", transition: "background .1s" }}
+      onMouseEnter={e => e.currentTarget.style.background = "var(--surface2)"}
+      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <Avatar name={s.name} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{s.name}</span>
+            <Badge status={status} />
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>{s.cls} · {s.adm || "—"}</div>
+        </div>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <ProgressBar fee={display.charges} paid={display.paid} />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 12 }}>
+          <span style={{ color: "var(--text3)" }}>Paid: <span style={{ color: "var(--green)", fontWeight: 600 }}>{money(display.paid)}</span></span>
+          {display.charges <= 0 ? <span style={{ color: "var(--text3)" }}>No Charges</span> : balance > 0 && <span style={{ color: "var(--amber)" }}>Bal: {money(balance)}</span>}
+        </div>
+        {display.pastOutstanding > 0 && <div style={{ marginTop: 5, fontSize: 11.5, color: "var(--text3)" }}>Past balance: {money(display.pastOutstanding)}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Students Page ─────────────────────────────────────────────────────────────
+export default function Students() {
+  const { token, hasPermission } = useAuth();
+  const { openSidebar }         = useOutletContext();
+  const { classes }             = useFeeStructure();
+
+  const students       = useAppStore(s => s.students);
+  const canCreateStudents = hasPermission('students.create');
+  const canEditStudents   = hasPermission('students.edit');
+  const canDeleteStudents = hasPermission('students.delete');
+  const studentsLoaded = useAppStore(s => s.studentsLoaded);
+
+  const [showModal,    setShowModal]    = useState(false);
+  const [showImport,   setShowImport]   = useState(false);
+  const [page,         setPage]         = useState(1);
+  const activeTerm     = useAppStore(s => s.activeTerm);
+  const [profileId,    setProfileId]    = useState(null);
+  const [editTarget,   setEditTarget]   = useState(null);
+  const [search,       setSearch]       = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterClass,  setFilterClass]  = useState("all");
+  const [mobileView,   setMobileView]   = useState(window.innerWidth < 700);
+  const [toast,        setToast]        = useState(null);
+
+  useEffect(() => {
+    const onResize = () => setMobileView(window.innerWidth < 700);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [search, filterStatus, filterClass]);
+
+  const studentsWithStatus = useMemo(() => students.map(s => {
+    const display = studentTableLedger(s);
+    return { ...s, _displayLedger: display, _status: computeStatus(display.charges, display.paid, display.outstanding) };
+  }), [students]);
+  const filtered = useMemo(() => studentsWithStatus.filter(s =>
+    (search === "" || s.name.toLowerCase().includes(search.toLowerCase()) || s.cls.toLowerCase().includes(search.toLowerCase()) || (s.adm || "").toLowerCase().includes(search.toLowerCase())) &&
+    (filterStatus === "all" || s._status === filterStatus) &&
+    (filterClass  === "all" || s.cls === filterClass)
+  ), [studentsWithStatus, search, filterStatus, filterClass]);
+
+  const counts = useMemo(() => ({
+    total:   studentsWithStatus.length,
+    paid:    studentsWithStatus.filter(s => s._status === "paid").length,
+    partial: studentsWithStatus.filter(s => s._status === "partial").length,
+    overdue: studentsWithStatus.filter(s => s._status === "overdue").length,
+  }), [studentsWithStatus]);
+
+  const allClasses   = useMemo(() => [...new Set([...classes, ...students.map(s => s.cls)])].filter(Boolean).sort(), [students, classes]);
+  const totalPages   = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated    = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
+
+  const openProfile = s => setProfileId(s.id);
+  const openEdit    = s => {
+    if (!canEditStudents) return;
+    setProfileId(null);
+    setEditTarget(s);
+  };
+
+  return (
+    <>
+      <Topbar title="Students" sub={`${students.length} enrolled`} onMenuClick={openSidebar}>
+        <button
+          disabled={!activeTerm || !canCreateStudents}
+          onClick={() => {
+            if (!activeTerm) {
+              showToast("Create an active term first (Dashboard → New Term) before importing students.", "error");
+              return;
+            }
+            if (!canCreateStudents) {
+              showToast("You do not have permission to import students.", "error");
+              return;
+            }
+            setShowImport(true);
+          }}
+          title={!activeTerm ? "Create an active term first" : canCreateStudents ? "Import students from CSV" : "You do not have permission to import students."}
+          style={{ padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: !activeTerm || !canCreateStudents ? "var(--surface)" : "var(--surface2)", border: "1px solid var(--border)", color: !activeTerm || !canCreateStudents ? "var(--text3)" : "var(--text2)", cursor: !activeTerm || !canCreateStudents ? "not-allowed" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>
+          📥 Import CSV
+        </button>
+        <button
+          className="btn btn-primary"
+          disabled={!activeTerm || !canCreateStudents}
+          onClick={() => {
+            if (!activeTerm) {
+              showToast("Create an active term first (Dashboard → New Term) before adding students.", "error");
+              return;
+            }
+            if (!canCreateStudents) {
+              showToast("You do not have permission to add students.", "error");
+              return;
+            }
+            setShowModal(true);
+          }}
+          title={!activeTerm ? "Create an active term first" : canCreateStudents ? "Add new student" : "You do not have permission to add students."}>
+          + Add Student
+        </button>
+      </Topbar>
+
+      <div className="page-content">
+        {/* No active term warning */}
+        {!activeTerm && studentsLoaded && (
+          <div style={{ background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--amber)" }}>No active term</div>
+              <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 2 }}>You need to create a term before adding students. Go to Dashboard → New Term.</div>
+            </div>
+          </div>
+        )}
+
+        {/* Stat pills */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          {[
+            { label: "All",     value: counts.total,   key: "all",     color: "var(--text)" },
+            { label: "Paid",    value: counts.paid,    key: "paid",    color: "var(--green)" },
+            { label: "Partial", value: counts.partial, key: "partial", color: "var(--amber)" },
+            { label: "Overdue", value: counts.overdue, key: "overdue", color: "var(--red)" },
+          ].map(s => (
+            <div key={s.key} onClick={() => setFilterStatus(s.key)} style={{ background: filterStatus === s.key ? "var(--surface2)" : "var(--surface)", border: `1px solid ${filterStatus === s.key ? "var(--surface3)" : "var(--border)"}`, borderTop: `${filterStatus === s.key ? "2px" : "1px"} solid ${filterStatus === s.key ? s.color : "var(--border)"}`, borderRadius: 10, padding: "10px 14px", cursor: "pointer", minWidth: 80, flex: "1 1 80px", maxWidth: 140 }}>
+              <div style={{ fontSize: 20, fontFamily: "'DM Serif Display',serif", color: s.color, lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text3)", marginTop: 4, textTransform: "uppercase", letterSpacing: .8 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Filters */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: "1 1 200px", minWidth: 160 }}>
+            <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="var(--text3)" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input style={{ width: "100%", paddingLeft: 36, paddingRight: 12, height: 40, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} placeholder="Search by name, class or adm…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <select value={filterClass} onChange={e => setFilterClass(e.target.value)} style={{ height: 40, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 9, padding: "0 12px", fontSize: 14, minWidth: 130, fontFamily: "inherit" }}>
+            <option value="all">All classes</option>
+            {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <div style={{ fontSize: 12, color: "var(--text3)", whiteSpace: "nowrap" }}>{filtered.length} student{filtered.length !== 1 ? "s" : ""} · Page {page} of {totalPages || 1}</div>
+        </div>
+
+        {/* Table / Cards */}
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+          {!studentsLoaded ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 13 }}>Loading students…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: "48px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 28, marginBottom: 12 }}>👥</div>
+              <div style={{ fontSize: 14, color: "var(--text2)", fontWeight: 500, marginBottom: 6 }}>No students match your filters</div>
+              <div style={{ fontSize: 13, color: "var(--accent)", cursor: "pointer" }} onClick={() => { setSearch(""); setFilterStatus("all"); setFilterClass("all"); }}>Clear filters</div>
+            </div>
+          ) : mobileView ? (
+            paginated.map(s => <StudentCard key={s.id} s={s} onClick={() => openProfile(s)} />)
+          ) : (
+            <div className="compact-table-wrap">
+              <table className="compact-table students-compact-table">
+                <thead>
+                  <tr>{["Student", "Adm No.", "Class", "Term Fee", "Paid", "Balance", "Progress", "Status"].map(h => <th key={h}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {paginated.map(s => {
+                    const display = s._displayLedger || studentTableLedger(s);
+                    const balance = display.outstanding;
+                    return (
+                      <tr key={s.id} onClick={() => openProfile(s)} style={{ cursor: "pointer" }}>
+                        <td className="cell-name">
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                            <Avatar name={s.name} />
+                            <span className="cell-truncate" style={{ fontWeight: 500, color: "var(--text)", minWidth: 0 }}>{s.name}</span>
+                          </div>
+                        </td>
+                        <td>{s.adm || "—"}</td>
+                        <td>{s.cls}</td>
+                        <td style={{ fontVariantNumeric: "tabular-nums" }}>{display.charges > 0 ? money(display.charges) : "No Charges"}</td>
+                        <td style={{ color: "var(--green)", fontVariantNumeric: "tabular-nums", fontWeight: 500 }}>{money(display.paid)}</td>
+                        <td style={{ color: balance === 0 ? "var(--text3)" : "var(--amber)", fontVariantNumeric: "tabular-nums", fontWeight: 500 }}>{balance === 0 ? "—" : money(balance)}</td>
+                        <td style={{ minWidth: 120 }}><ProgressBar fee={display.charges} paid={display.paid} /></td>
+                        <td><Badge status={s._status} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <Pagination page={page} totalPages={totalPages} onChange={p => { setPage(p); window.scrollTo(0, 0); }} total={filtered.length} perPage={PAGE_SIZE} />
+        </div>
+      </div>
+
+      {showModal && <AddStudentModal onClose={() => setShowModal(false)} />}
+
+      {profileId && (
+        <StudentProfileModal studentId={profileId} token={token} onClose={() => setProfileId(null)} onEdit={openEdit} />
+      )}
+
+      {editTarget && (
+        <EditStudentModal student={editTarget} token={token} onClose={() => setEditTarget(null)} />
+      )}
+
+      {showImport && (
+        <ImportStudentsModal onClose={() => setShowImport(false)} />
+      )}
+
+      {toast && (
+        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 100, background: "var(--surface)", border: "1px solid var(--border)", borderLeft: `3px solid ${toast.type === "error" ? "var(--red)" : "var(--green)"}`, borderRadius: 10, padding: "12px 20px", fontSize: 13, color: "var(--text)", boxShadow: "var(--shadow)", display: "flex", alignItems: "center", gap: 10, whiteSpace: "nowrap", maxWidth: "calc(100vw - 32px)", animation: "fadeUp .2s ease" }}>
+          <span style={{ color: toast.type === "error" ? "var(--red)" : "var(--green)" }}>{toast.type === "error" ? "✕" : "✓"}</span>
+          {toast.msg}
+        </div>
+      )}
+    </>
+  );
+}

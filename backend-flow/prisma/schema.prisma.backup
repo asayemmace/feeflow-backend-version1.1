@@ -1,0 +1,537 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id                           String                        @id @default(uuid())
+  name                         String
+  email                        String                        @unique
+  password                     String
+  schoolName                   String?
+  createdAt                    DateTime                      @default(now())
+  mpesaConfigured              Boolean                       @default(false)
+  mpesaConsumerKey             String?
+  mpesaConsumerSecret          String?
+  mpesaPasskey                 String?
+  mpesaShortcode               String?
+  phone                        String?
+  plan                         String                        @default("free")
+  planExpiry                   DateTime?
+  autoReminders                Boolean                       @default(false)
+  passwordChangedAt            DateTime?
+  schoolLogoUrl                String?
+  schoolLogoPath               String?
+  schoolTagline                String?
+  schoolPrimaryColor           String?
+  schoolSecondaryColor         String?
+  emailVerified                Boolean                       @default(true)
+  emailVerifiedAt              DateTime?
+  bankPaybillNumber            String?
+  bankAccountNumber            String?
+  bankAccountName              String?
+  bankName                     String?
+  bankPaymentInstructions      String?
+  c2bCallbackToken             String?                       @db.VarChar(128)
+  whatsappEnabled              Boolean                       @default(false)
+  actorAuditLogs               AuditLog[]                    @relation("ActorUserAuditLogs")
+  auditLogs                    AuditLog[]                    @relation("OwnerAuditLogs")
+  bankStatementUploads         BankStatementUpload[]
+  bankTransactions             BankTransaction[]
+  invoices                     Invoice[]
+  mpesaCallbackLogs            MpesaCallbackLog[]
+  parentBankPaymentSubmissions ParentBankPaymentSubmission[]
+  passwordResetTokens          PasswordResetToken[]
+  payments                     Payment[]
+  receipts                     Receipt[]
+  staffUsers                   StaffUser[]
+  students                     Student[]
+  subscriptionPayments         SubscriptionPayment[]
+  terms                        Term[]
+  unmatchedPayments            UnmatchedPayment[]
+}
+
+model Student {
+  id          String    @id @default(uuid())
+  name        String
+  userId      String
+  createdAt   DateTime  @default(now())
+  adm         String    @default("")
+  cls         String    @default("")
+  daysOverdue Int       @default(0)
+  fee         Float     @default(0)
+  paid        Float     @default(0)
+  deletedAt   DateTime?
+  parentEmail String?
+  parentName  String?
+  parentPhone String?
+  phone       String?
+  termId      String?
+  version     Int       @default(1)
+  payments    Payment[]
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, deletedAt])
+  @@index([userId, cls])
+}
+
+model Payment {
+  id                String              @id @default(uuid())
+  amount            Float
+  txnRef            String?
+  studentId         String
+  userId            String
+  createdAt         DateTime            @default(now())
+  deletedAt         DateTime?
+  feeBreakdown      Json?               @default("[]")
+  method            String              @default("manual")
+  termId            String?
+  isReversal        Boolean             @default(false)
+  originalPaymentId String?
+  overpaymentAmount Float               @default(0)
+  reversalReason    String?
+  reversedAt        DateTime?
+  reversedBy        String?
+  version           Int                 @default(1)
+  paymentTermId     String?
+  receivedAt        DateTime            @default(now())
+  student           Student             @relation(fields: [studentId], references: [id])
+  user              User                @relation(fields: [userId], references: [id])
+  allocations       PaymentAllocation[]
+
+  @@unique([userId, txnRef], name: "unique_txnref_per_school")
+  @@index([userId])
+  @@index([studentId])
+  @@index([userId, deletedAt])
+  @@index([studentId, createdAt])
+  @@index([userId, paymentTermId])
+  @@index([studentId, paymentTermId])
+  @@index([originalPaymentId])
+}
+
+model BankStatementUpload {
+  id           String            @id @default(cuid())
+  userId       String
+  fileName     String
+  fileHash     String
+  uploadedBy   String?
+  uploadedAt   DateTime          @default(now())
+  status       String            @default("PROCESSING")
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([userId, fileHash])
+  @@index([userId, uploadedAt])
+}
+
+model BankTransaction {
+  id                 String              @id @default(cuid())
+  userId             String
+  uploadId           String
+  transactionRef     String?
+  amount             Float
+  paidAt             DateTime
+  payerName          String?
+  narration          String?
+  rawRowJson         Json                @default("{}")
+  matchedStudentId   String?
+  suggestedStudentId String?
+  suggestedReason    String?
+  matchConfidence    Int                 @default(0)
+  matchReason        String?
+  paymentStatus      BankPaymentStatus   @default(NEEDS_REVIEW)
+  requiredBalance    Float               @default(0)
+  createdReceiptId   String?
+  createdPaymentId   String?
+  createdAt          DateTime            @default(now())
+  upload             BankStatementUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, transactionRef])
+  @@index([userId, uploadId])
+  @@index([matchedStudentId])
+  @@index([paymentStatus])
+}
+
+model ParentBankPaymentSubmission {
+  id               String                  @id @default(cuid())
+  userId           String
+  invoiceId        String?
+  studentId        String?
+  parentName       String?
+  parentPhone      String?
+  transactionRef   String?
+  amount           Float
+  paidAt           DateTime?
+  note             String?
+  proofPath        String?
+  status           ParentBankPaymentStatus @default(UNDER_REVIEW)
+  submittedAt      DateTime                @default(now())
+  reviewedAt       DateTime?
+  reviewedBy       String?
+  createdPaymentId String?
+  createdReceiptId String?
+  metadata         Json                    @default("{}")
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, transactionRef])
+  @@index([userId, status])
+  @@index([invoiceId])
+  @@index([studentId])
+}
+
+model PaymentAllocation {
+  id              String        @id @default(cuid())
+  paymentId       String
+  studentChargeId String
+  amount          Float
+  createdAt       DateTime      @default(now())
+  payment         Payment       @relation(fields: [paymentId], references: [id])
+  studentCharge   StudentCharge @relation(fields: [studentChargeId], references: [id])
+
+  @@index([paymentId])
+  @@index([studentChargeId])
+}
+
+model Term {
+  id        String   @id @default(uuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  status    String   @default("active")
+  userId    String
+  createdAt DateTime @default(now())
+  classFees Json     @default("{}")
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+}
+
+model UnmatchedPayment {
+  id                   String    @id @default(uuid())
+  phone                String?
+  txnRef               String?
+  amount               Float
+  userId               String
+  createdAt            DateTime  @default(now())
+  senderName           String?
+  billRefNumber        String?
+  source               String?
+  method               String?
+  matchStatus          String    @default("UNMATCHED")
+  matchConfidence      Int       @default(0)
+  matchReason          String?
+  matchedStudentId     String?
+  suggestedStudentId   String?
+  suggestedReason      String?
+  transactionDate      DateTime?
+  rawSafaricomMetadata Json?
+  user                 User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, matchStatus])
+}
+
+model Invoice {
+  id                  String    @id @default(cuid())
+  invoiceNo           Int       @default(0)
+  token               String    @default("")
+  userId              String
+  studentId           String
+  studentName         String
+  admNo               String?
+  className           String    @default("")
+  totalFee            Float     @default(0)
+  paid                Float     @default(0)
+  balance             Float     @default(0)
+  dueDate             DateTime
+  scheduledFor        DateTime?
+  sentAt              DateTime?
+  channels            String[]
+  termName            String?
+  note                String?
+  feeBreakdown        Json      @default("[]")
+  parentPhone         String?
+  parentName          String?
+  status              String    @default("draft")
+  createdAt           DateTime  @default(now())
+  smsMessageId        String?
+  smsStatus           String?   @default("pending")
+  termId              String?
+  idempotencyKey      String?   @unique
+  accountTotalCharges Float     @default(0)
+  totalPaidToDate     Float     @default(0)
+  totalDueNow         Float     @default(0)
+  newChargesTotal     Float     @default(0)
+  previousOutstanding Float     @default(0)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([userId, termId])
+  @@index([status, scheduledFor])
+  @@index([smsMessageId])
+}
+
+model Receipt {
+  id           String    @id @default(cuid())
+  receiptNo    String    @default("")
+  token        String    @default("")
+  userId       String
+  paymentId    String
+  studentId    String
+  studentName  String
+  admNo        String?
+  className    String    @default("")
+  amount       Float
+  method       String
+  txnRef       String?
+  paidAt       DateTime
+  sentAt       DateTime?
+  channels     String[]
+  type         String    @default("manual")
+  balance      Float     @default(0)
+  status       String    @default("pending")
+  createdAt    DateTime  @default(now())
+  smsMessageId String?
+  smsStatus    String?   @default("pending")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([smsMessageId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, createdAt])
+  @@index([userId, usedAt, expiresAt])
+}
+
+model PreRegistrationVerification {
+  id        String    @id @default(cuid())
+  email     String
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+
+  @@index([email, createdAt])
+  @@index([email, usedAt, expiresAt])
+}
+
+model StaffUser {
+  id              String     @id @default(cuid())
+  ownerUserId     String
+  name            String
+  phone           String?
+  email           String     @unique
+  jobTitle        String?
+  passwordHash    String?
+  permissions     Json       @default("[]")
+  status          String     @default("invited")
+  invitedAt       DateTime   @default(now())
+  inviteTokenHash String?
+  inviteExpiresAt DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  actorAuditLogs  AuditLog[] @relation("ActorStaffAuditLogs")
+  owner           User       @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId, status])
+  @@index([email])
+}
+
+model AuditLog {
+  id            String     @id @default(cuid())
+  schoolOwnerId String
+  actorUserId   String?
+  actorStaffId  String?
+  action        String
+  entityType    String?
+  entityId      String?
+  metadataJson  Json       @default("{}")
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime   @default(now())
+  actorStaff    StaffUser? @relation("ActorStaffAuditLogs", fields: [actorStaffId], references: [id])
+  actorUser     User?      @relation("ActorUserAuditLogs", fields: [actorUserId], references: [id])
+  schoolOwner   User       @relation("OwnerAuditLogs", fields: [schoolOwnerId], references: [id], onDelete: Cascade)
+
+  @@index([schoolOwnerId, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+}
+
+model Sequence {
+  id      String @id
+  nextVal Int    @default(1)
+}
+
+model MpesaTransaction {
+  id                 String    @id @default(cuid())
+  checkoutRequestId  String    @unique
+  merchantRequestId  String?
+  studentId          String
+  userId             String
+  amount             Float
+  phone              String
+  status             String    @default("awaiting_callback")
+  mpesaRef           String?   @unique
+  resultCode         Int?
+  resultDesc         String?
+  callbackReceivedAt DateTime?
+  resolvedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  retryCount         Int       @default(0)
+  payerName          String?
+
+  @@index([userId])
+  @@index([studentId, status])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model MpesaCallbackLog {
+  id                String   @id @default(cuid())
+  userId            String?
+  checkoutRequestId String?
+  merchantRequestId String?
+  resultCode        Int?
+  resultDesc        String?
+  status            String   @default("received")
+  rawCallback       Json     @default("{}")
+  ipAddress         String?
+  userAgent         String?
+  createdAt         DateTime @default(now())
+  user              User?    @relation(fields: [userId], references: [id])
+
+  @@index([checkoutRequestId])
+  @@index([userId, createdAt])
+}
+
+model SystemHealth {
+  id            String    @id
+  degraded      Boolean   @default(false)
+  degradedSince DateTime?
+  successRate   Float     @default(1.0)
+  checkedAt     DateTime  @default(now())
+}
+
+model BalanceLedger {
+  id            String   @id @default(cuid())
+  studentId     String
+  userId        String
+  paymentId     String?
+  delta         Float
+  balanceBefore Float
+  balanceAfter  Float
+  source        String
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([studentId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model StudentCharge {
+  id             String              @id @default(cuid())
+  studentId      String
+  userId         String
+  termId         String?
+  invoiceId      String?
+  type           String
+  description    String
+  amount         Float
+  voidedAt       DateTime?
+  voidedBy       String?
+  voidReason     String?
+  createdAt      DateTime            @default(now())
+  splitCharge    Boolean             @default(false)
+  idempotencyKey String?
+  allocations    PaymentAllocation[]
+
+  @@index([studentId])
+  @@index([studentId, voidedAt])
+  @@index([userId, voidedAt])
+  @@index([studentId, termId])
+  @@index([userId, termId])
+  @@index([invoiceId])
+}
+
+model CreditMemo {
+  id              String   @id @default(cuid())
+  studentId       String
+  userId          String
+  termId          String?
+  sourcePaymentId String?
+  amount          Float
+  remainingAmount Float
+  status          String   @default("available")
+  appliedToTermId String?
+  note            String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([studentId, status])
+  @@index([userId])
+}
+
+model SubscriptionPayment {
+  id                 String    @id @default(cuid())
+  userId             String
+  plan               String
+  amount             Int
+  phone              String
+  checkoutRequestId  String?   @unique
+  merchantRequestId  String?
+  mpesaRef           String?   @unique
+  status             String    @default("pending")
+  resultDesc         String?
+  resultCode         Int?
+  callbackReceivedAt DateTime?
+  activatedAt        DateTime?
+  planExpiry         DateTime?
+  monthsGranted      Int       @default(1)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  user               User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([checkoutRequestId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum BankPaymentStatus {
+  FULL
+  PARTIAL
+  OVERPAYMENT
+  UNMATCHED
+  DUPLICATE
+  NEEDS_REVIEW
+}
+
+enum ParentBankPaymentStatus {
+  UNDER_REVIEW
+  CONFIRMED
+  REJECTED
+  DUPLICATE
+}
