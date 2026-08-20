@@ -17,6 +17,7 @@ import Payments         from './pages/Payments';
 import InvoicesReceipts from './pages/InvoicesReceipts';
 import StaffManagement  from './pages/StaffManagement';
 import AdminDashboard   from './pages/AdminDashboard';
+import AdminInbox       from './pages/AdminInbox';
 
 // Redirects to /login if not logged in
 function PrivateRoute({ children }) {
@@ -97,6 +98,10 @@ function AppRoutes() {
         <Route
           path="/admin"
           element={(user?.userType || 'owner') !== 'staff' && user?.isPlatformAdmin ? <AdminDashboard /> : <AccessDenied />}
+        />
+        <Route
+          path="/admin/inbox"
+          element={(user?.userType || 'owner') !== 'staff' && user?.isPlatformAdmin ? <AdminInbox /> : <AccessDenied />}
         />
       </Route>
 
