@@ -10138,7 +10138,7 @@ async function classifyInboxMessage(messageText, context) {
     return { canAutoAnswer: false, reply: null };
   }
 
-  const model = process.env.AI_MODEL || "gemini-1.5-flash";
+  const model = process.env.AI_MODEL || "gemini-3.1-flash-lite";
   const prompt = `${INBOX_SYSTEM_PROMPT}\n\nContext:\n${JSON.stringify(context)}\n\nParent's message:\n${messageText}`;
 
   try {
